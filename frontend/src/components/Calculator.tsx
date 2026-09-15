@@ -6,6 +6,7 @@ import {
   type Operation,
   type UnaryOperation,
 } from "../api/calculatorApi";
+import { formatForDisplay, formatResult } from "../format";
 import "./Calculator.css";
 
 const OPERATION_SYMBOLS: Record<Operation, string> = {
@@ -259,7 +260,7 @@ export function Calculator() {
           {error}
         </div>
       )}
-      <div className="calculator-functions">
+      <div className="calculator-functions" onMouseDown={keepFocusOffClickedKeys}>
         {(["sqrt", "percent"] as const).map((operation) => (
           <button
             key={operation}
@@ -280,7 +281,7 @@ export function Calculator() {
           x&#x02B8;
         </button>
       </div>
-      <div className="calculator-keypad">
+      <div className="calculator-keypad" onMouseDown={keepFocusOffClickedKeys}>
         <button type="button" className="key key-clear" onClick={clear}>
           C
         </button>
@@ -330,6 +331,17 @@ export function Calculator() {
   );
 }
 
+/**
+ * Stops a mouse click from leaving focus on the key it hit, without touching
+ * keyboard focus. Otherwise the clicked key stays focused and swallows the
+ * next Enter — click "C", type "48/6", press Enter, and Enter re-fires "C"
+ * instead of "=". Tabbing to a key still focuses it, so Enter and Space go
+ * on activating the focused key for keyboard users.
+ */
+function keepFocusOffClickedKeys(event: React.MouseEvent) {
+  event.preventDefault();
+}
+
 function failedState(err: unknown): State {
   return {
     ...INITIAL_STATE,
@@ -339,27 +351,3 @@ function failedState(err: unknown): State {
   };
 }
 
-function formatResult(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "Error";
-  }
-  return Number(value.toFixed(10)).toString();
-}
-
-/**
- * Groups the integer part into thousands (e.g. "1234567" -> "1,234,567").
- * Chunking long digit strings this way keeps them within short-term working
- * memory's ~7-item span (Miller's Law) instead of one unbroken run of digits.
- * Purely a display concern — the underlying numeric value is untouched.
- */
-function formatForDisplay(value: string): string {
-  if (value === "Error") {
-    return value;
-  }
-  const negative = value.startsWith("-");
-  const unsigned = negative ? value.slice(1) : value;
-  const [integerPart, ...decimalParts] = unsigned.split(".");
-  const grouped = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const decimalSuffix = decimalParts.length > 0 ? "." + decimalParts.join(".") : "";
-  return (negative ? "-" : "") + grouped + decimalSuffix;
-}

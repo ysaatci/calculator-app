@@ -176,6 +176,20 @@ describe("Calculator", () => {
     expect(screen.getByTestId("display")).toHaveTextContent("64");
   });
 
+  it("still reads Enter as equals after keys were clicked with the mouse", async () => {
+    // A clicked key must not keep focus, or Enter re-fires that key instead
+    // of submitting the calculation.
+    const user = userEvent.setup();
+    calculateMock.mockResolvedValue({ operation: "divide", a: 48, b: 6, result: 8 });
+    render(<Calculator />);
+
+    await pressButtons(["C"])();
+    await user.keyboard("48/6{Enter}");
+
+    expect(calculateMock).toHaveBeenCalledWith("divide", 48, 6);
+    expect(screen.getByTestId("display")).toHaveTextContent("8");
+  });
+
   it("clears via the Escape key", async () => {
     const user = userEvent.setup();
     render(<Calculator />);
