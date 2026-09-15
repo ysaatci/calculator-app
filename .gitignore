@@ -17,3 +17,7 @@ Thumbs.db
 # Env files
 .env
 .env.local
+
+# Local machine-specific dev helper scripts (not part of the deliverable)
+.claude/
+scripts/
