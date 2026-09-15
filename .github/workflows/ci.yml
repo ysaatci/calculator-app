@@ -203,6 +203,12 @@ jobs:
           PLAYWRIGHT_HTML_OPEN: never
         run: npm run test:e2e -- --reporter=github,json,html
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: frontend/playwright-results.json
+          retention-days: 7
+
       - name: End-to-end summary
         if: always()
         working-directory: frontend
@@ -266,6 +272,13 @@ jobs:
           name: frontend-report
           path: site/frontend
 
+      # Job summaries on the run page aren't shown to signed-out visitors, so
+      # the end-to-end results go on the public page too.
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-results
+          path: e2e
+
       - name: Build badges and index page
         env:
           COMMIT: ${{ github.sha }}
@@ -289,6 +302,7 @@ jobs:
           backend_tests=$(jq '.passed' site/backend/report.json)
           frontend=$(jq '.coverage' site/frontend/report.json)
           frontend_tests=$(jq '.passed' site/frontend/report.json)
+          e2e_tests=$(jq '.stats.expected' e2e/playwright-results.json)
 
           mkdir -p site/badges
           badge "$backend" "backend coverage" > site/badges/backend.json
@@ -315,7 +329,9 @@ jobs:
               <tr><th>Part</th><th>Tests passed</th><th>Coverage</th><th>Report</th></tr>
               <tr><td>Backend (Go, internal/...)</td><td>${backend_tests}</td><td>$(printf '%.1f' "$backend")%</td><td><a href="backend/">Open</a></td></tr>
               <tr><td>Frontend (React + TS, statements)</td><td>${frontend_tests}</td><td>$(printf '%.1f' "$frontend")%</td><td><a href="frontend/">Open</a></td></tr>
+              <tr><td>End-to-end (Playwright, desktop and mobile)</td><td>${e2e_tests}</td><td>–</td><td><a href="${RUN_URL}">CI run</a></td></tr>
             </table>
+            <p class="muted">The end-to-end job also checks the API contract against the running Docker Compose stack.</p>
             <p class="muted">Backend coverage excludes cmd/server, which only starts the process and is exercised by the end-to-end tests.</p>
             <p class="muted">Built from commit <code>${COMMIT:0:7}</code> · <a href="${RUN_URL}">CI run</a> · <a href="${REPO_URL}">Repository</a></p>
           </body>
