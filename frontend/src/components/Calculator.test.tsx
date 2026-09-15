@@ -32,6 +32,65 @@ describe("Calculator", () => {
     expect(screen.getByTestId("display")).toHaveTextContent("5");
   });
 
+  it("applies a unary operation to the displayed value immediately", async () => {
+    calculateMock.mockResolvedValue({ operation: "sqrt", a: 9, result: 3 });
+    render(<Calculator />);
+
+    await pressButtons(["9", "√"])();
+
+    // No second operand, and no "=" needed.
+    expect(calculateMock).toHaveBeenCalledWith("sqrt", 9);
+    expect(screen.getByTestId("display")).toHaveTextContent("3");
+  });
+
+  it("keeps a pending operation while a unary operation is applied", async () => {
+    calculateMock.mockResolvedValue({ operation: "sqrt", a: 9, result: 3 });
+    render(<Calculator />);
+
+    await pressButtons(["5", "+", "9", "√"])();
+    expect(calculateMock).toHaveBeenLastCalledWith("sqrt", 9);
+
+    calculateMock.mockResolvedValue({ operation: "add", a: 5, b: 3, result: 8 });
+    await pressButtons(["="])();
+
+    expect(calculateMock).toHaveBeenLastCalledWith("add", 5, 3);
+    expect(screen.getByTestId("display")).toHaveTextContent("8");
+  });
+
+  it("converts the displayed value with the percent key", async () => {
+    calculateMock.mockResolvedValue({ operation: "percent", a: 50, result: 0.5 });
+    render(<Calculator />);
+
+    await pressButtons(["5", "0", "%"])();
+
+    expect(calculateMock).toHaveBeenCalledWith("percent", 50);
+    expect(screen.getByTestId("display")).toHaveTextContent("0.5");
+  });
+
+  it("raises a number to a power as a two-operand operation", async () => {
+    calculateMock.mockResolvedValue({ operation: "power", a: 2, b: 10, result: 1024 });
+    render(<Calculator />);
+
+    await pressButtons(["2", "xʸ", "1", "0", "="])();
+
+    expect(calculateMock).toHaveBeenCalledWith("power", 2, 10);
+    expect(screen.getByTestId("display")).toHaveTextContent("1,024");
+  });
+
+  it("surfaces a backend error from a unary operation", async () => {
+    calculateMock.mockRejectedValue(
+      new CalculatorApiError("square root of a negative number"),
+    );
+    render(<Calculator />);
+
+    await pressButtons(["9", "√"])();
+
+    expect(screen.getByTestId("display")).toHaveTextContent("Error");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "square root of a negative number",
+    );
+  });
+
   it("blocks a second decimal point in the same number", async () => {
     render(<Calculator />);
 
@@ -100,6 +159,21 @@ describe("Calculator", () => {
 
     expect(calculateMock).toHaveBeenCalledWith("add", 12, 3);
     expect(screen.getByTestId("display")).toHaveTextContent("15");
+  });
+
+  it("maps keyboard shortcuts to the function keys", async () => {
+    const user = userEvent.setup();
+    calculateMock.mockResolvedValue({ operation: "sqrt", a: 16, result: 4 });
+    render(<Calculator />);
+
+    await user.keyboard("16r");
+    expect(calculateMock).toHaveBeenLastCalledWith("sqrt", 16);
+
+    calculateMock.mockResolvedValue({ operation: "power", a: 4, b: 3, result: 64 });
+    await user.keyboard("^3{Enter}");
+
+    expect(calculateMock).toHaveBeenLastCalledWith("power", 4, 3);
+    expect(screen.getByTestId("display")).toHaveTextContent("64");
   });
 
   it("clears via the Escape key", async () => {

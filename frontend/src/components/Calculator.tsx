@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { calculate, CalculatorApiError, type Operation } from "../api/calculatorApi";
+import {
+  calculate,
+  CalculatorApiError,
+  type BinaryOperation,
+  type Operation,
+  type UnaryOperation,
+} from "../api/calculatorApi";
 import "./Calculator.css";
 
 const OPERATION_SYMBOLS: Record<Operation, string> = {
@@ -7,21 +13,30 @@ const OPERATION_SYMBOLS: Record<Operation, string> = {
   subtract: "−",
   multiply: "×",
   divide: "÷",
+  power: "^",
+  sqrt: "√",
+  percent: "%",
 };
 
 // Keyboard equivalents for the on-screen keys. Every shortcut maps to a key
 // that exists in the UI, so the two input methods stay in sync.
-const KEY_TO_OPERATION: Record<string, Operation> = {
+const KEY_TO_BINARY_OPERATION: Record<string, BinaryOperation> = {
   "+": "add",
   "-": "subtract",
   "*": "multiply",
   "/": "divide",
+  "^": "power",
+};
+
+const KEY_TO_UNARY_OPERATION: Record<string, UnaryOperation> = {
+  r: "sqrt",
+  "%": "percent",
 };
 
 interface State {
   display: string;
   storedValue: number | null;
-  pendingOperation: Operation | null;
+  pendingOperation: BinaryOperation | null;
   overwrite: boolean;
   error: string | null;
   loading: boolean;
@@ -80,7 +95,7 @@ export function Calculator() {
     setState(INITIAL_STATE);
   }
 
-  async function chooseOperation(operation: Operation) {
+  async function chooseOperation(operation: BinaryOperation) {
     // A calculation replaces the whole state when it resolves, so input
     // accepted while one is in flight would be silently discarded.
     if (state.loading) {
@@ -116,11 +131,39 @@ export function Calculator() {
     await runCalculation(state.pendingOperation, state.storedValue, Number(state.display), null);
   }
 
+  // Unary operations act on the displayed value straight away, the way the
+  // "%" and "√" keys do on a pocket calculator. Any pending binary operation
+  // is left untouched, so "5 + 9 √ =" still adds 5 to the root of 9.
+  async function applyUnaryOperation(operation: UnaryOperation) {
+    if (state.loading) {
+      return;
+    }
+    if (state.error) {
+      setState(INITIAL_STATE);
+      return;
+    }
+
+    const value = Number(state.display);
+    setState((s) => ({ ...s, loading: true }));
+    try {
+      const { result } = await calculate(operation, value);
+      setState((s) => ({
+        ...s,
+        display: formatResult(result),
+        overwrite: true,
+        error: null,
+        loading: false,
+      }));
+    } catch (err) {
+      setState(failedState(err));
+    }
+  }
+
   async function runCalculation(
-    operation: Operation,
+    operation: BinaryOperation,
     a: number,
     b: number,
-    nextPendingOperation: Operation | null,
+    nextPendingOperation: BinaryOperation | null,
   ) {
     setState((s) => ({ ...s, loading: true }));
     try {
@@ -134,15 +177,7 @@ export function Calculator() {
         loading: false,
       });
     } catch (err) {
-      const message = err instanceof CalculatorApiError ? err.message : "Unexpected error";
-      setState({
-        display: "Error",
-        storedValue: null,
-        pendingOperation: null,
-        overwrite: true,
-        error: message,
-        loading: false,
-      });
+      setState(failedState(err));
     }
   }
 
@@ -166,8 +201,10 @@ export function Calculator() {
         inputDigit(key);
       } else if (key === "." || key === ",") {
         inputDecimal();
-      } else if (key in KEY_TO_OPERATION) {
-        void chooseOperation(KEY_TO_OPERATION[key]);
+      } else if (key in KEY_TO_BINARY_OPERATION) {
+        void chooseOperation(KEY_TO_BINARY_OPERATION[key]);
+      } else if (key.toLowerCase() in KEY_TO_UNARY_OPERATION) {
+        void applyUnaryOperation(KEY_TO_UNARY_OPERATION[key.toLowerCase()]);
       } else if (key === "Enter" || key === "=") {
         void equals();
       } else if (key === "Escape" || key === "c" || key === "C") {
@@ -202,6 +239,27 @@ export function Calculator() {
           {error}
         </div>
       )}
+      <div className="calculator-functions">
+        {(["sqrt", "percent"] as const).map((operation) => (
+          <button
+            key={operation}
+            type="button"
+            className="key key-function"
+            onClick={() => applyUnaryOperation(operation)}
+            disabled={loading}
+          >
+            {OPERATION_SYMBOLS[operation]}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="key key-function"
+          onClick={() => chooseOperation("power")}
+          disabled={loading}
+        >
+          x&#x02B8;
+        </button>
+      </div>
       <div className="calculator-keypad">
         <button type="button" className="key key-clear" onClick={clear} disabled={loading}>
           C
@@ -250,6 +308,15 @@ export function Calculator() {
       </div>
     </div>
   );
+}
+
+function failedState(err: unknown): State {
+  return {
+    ...INITIAL_STATE,
+    display: "Error",
+    overwrite: true,
+    error: err instanceof CalculatorApiError ? err.message : "Unexpected error",
+  };
 }
 
 function formatResult(value: number): string {

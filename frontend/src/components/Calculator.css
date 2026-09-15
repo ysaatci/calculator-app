@@ -40,6 +40,23 @@
   text-align: right;
 }
 
+/* Secondary functions sit in their own row so the main keypad keeps the
+   familiar phone-calculator layout instead of growing a fifth column. */
+.calculator-functions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: minmax(44px, 52px);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.key-function {
+  background: #2c2c2e;
+  color: #f0a02c;
+  font-size: 1.2rem;
+  border-radius: 26px;
+}
+
 .calculator-keypad {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -110,6 +127,11 @@
   .calculator-keypad {
     grid-auto-rows: minmax(48px, 56px);
     gap: 6px;
+  }
+
+  .calculator-functions {
+    gap: 6px;
+    margin-bottom: 6px;
   }
 
   .key {
