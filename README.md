@@ -1,6 +1,12 @@
 # Calculator App
 
+[![CI](https://github.com/ysaatci/calculator-app/actions/workflows/ci.yml/badge.svg)](https://github.com/ysaatci/calculator-app/actions/workflows/ci.yml)
+[![Backend coverage](https://img.shields.io/endpoint?url=https://ysaatci.github.io/calculator-app/badges/backend.json)](https://ysaatci.github.io/calculator-app/backend/)
+[![Frontend coverage](https://img.shields.io/endpoint?url=https://ysaatci.github.io/calculator-app/badges/frontend.json)](https://ysaatci.github.io/calculator-app/frontend/)
+
 A calculator with a Go REST API backend and a React + TypeScript frontend.
+
+**Coverage reports:** https://ysaatci.github.io/calculator-app/
 
 ```mermaid
 flowchart TB
@@ -167,6 +173,16 @@ npm run test:e2e   # needs `docker compose up`
 
 CI (`.github/workflows/ci.yml`) also runs `gofmt`, `go vet`, `go test -race`
 and `oxlint` on every push and pull request to `main`.
+
+### Coverage reports
+
+On every push to `main`, CI publishes HTML coverage reports to
+[GitHub Pages](https://ysaatci.github.io/calculator-app/) and updates the
+coverage badges above. Each CI run also lists test counts and coverage on its
+summary page.
+
+Backend coverage is measured over `internal/...`. `cmd/server` only starts
+the process and handles shutdown signals; it runs in the end-to-end job.
 
 ## API
 

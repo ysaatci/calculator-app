@@ -2,6 +2,8 @@
 backend/bin/
 *.exe
 *.test
+backend/coverage*.out
+backend/go-test.json
 
 # Node / frontend
 frontend/node_modules/
@@ -10,6 +12,12 @@ frontend/coverage/
 frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
+frontend/vitest-results.json
+frontend/playwright-results.json
+
+# Coverage reports assembled in CI
+backend/report/
+frontend/report/
 
 # Editors / OS
 .vscode/

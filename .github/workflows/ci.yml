@@ -23,9 +23,50 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
       - run: go build ./...
+
       # -race needs cgo, which isn't available on every dev machine but is
       # free here, so concurrency bugs get caught in CI rather than in prod.
-      - run: go test ./... -race -cover
+      - name: Test
+        run: |
+          status=0
+          go test ./... -race -covermode=atomic -coverprofile=coverage.out -json > go-test.json || status=$?
+          # -json replaces the usual output: show package results, or
+          # everything if something failed.
+          if [ "$status" -ne 0 ]; then
+            jq -r 'select(.Action == "output" or .Action == "build-output") | .Output' go-test.json
+          else
+            jq -r 'select(.Action == "output" and .Test == null) | .Output' go-test.json
+          fi
+          exit "$status"
+
+      - name: Coverage report
+        run: |
+          set -euo pipefail
+          # cmd/server only starts the process and handles signals; it runs in
+          # the end-to-end job rather than in unit tests, so the figure
+          # covers internal/... only.
+          grep -v '/cmd/' coverage.out > coverage.internal.out
+          coverage=$(go tool cover -func=coverage.internal.out | awk '/^total:/ { sub("%", "", $NF); print $NF }')
+          passed=$(jq -s '[.[] | select(.Action == "pass" and .Test != null)] | length' go-test.json)
+
+          mkdir -p report
+          go tool cover -html=coverage.internal.out -o report/index.html
+          jq -n --argjson coverage "$coverage" --argjson passed "$passed" \
+            '{coverage: $coverage, passed: $passed}' > report/report.json
+
+          {
+            echo "### Backend"
+            echo ""
+            echo "| Tests passed (incl. subtests) | Coverage, internal/... |"
+            echo "|---|---|"
+            echo "| $passed | $coverage% |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-report
+          path: backend/report/
+          retention-days: 7
 
   frontend:
     name: Frontend (React + TS)
@@ -43,12 +84,43 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npx tsc -b --noEmit
-      - run: npm run coverage
+
+      - name: Test
+        run: npm run coverage -- --reporter=default --reporter=json --outputFile.json=vitest-results.json
+
+      - name: Coverage report
+        run: |
+          set -euo pipefail
+          summary=coverage/coverage-summary.json
+          passed=$(jq '.numPassedTests' vitest-results.json)
+          statements=$(jq '.total.statements.pct' "$summary")
+          branches=$(jq '.total.branches.pct' "$summary")
+          functions=$(jq '.total.functions.pct' "$summary")
+          lines=$(jq '.total.lines.pct' "$summary")
+
+          mkdir -p report
+          cp -r coverage/. report/
+          jq -n --argjson coverage "$statements" --argjson passed "$passed" \
+            '{coverage: $coverage, passed: $passed}' > report/report.json
+
+          {
+            echo "### Frontend"
+            echo ""
+            echo "| Tests passed | Statements | Branches | Functions | Lines |"
+            echo "|---|---|---|---|---|"
+            echo "| $passed | $statements% | $branches% | $functions% | $lines% |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-report
+          path: frontend/report/
+          retention-days: 7
 
   # Unit tests on either side mock the other, so nothing above would notice
-  # if the two stopped agreeing on the wire format - or if the keypad stopped
-  # being wired up at all. This runs the real containers, talks to them over
-  # HTTP, and then drives the real UI in a browser.
+  # if the two stopped agreeing on the wire format, or if the keypad stopped
+  # being wired up. This runs the real containers, calls them over HTTP, and
+  # drives the UI in a browser.
   integration:
     name: End-to-end (docker compose)
     runs-on: ubuntu-latest
@@ -126,7 +198,28 @@ jobs:
 
       - name: Drive the real UI
         working-directory: frontend
-        run: npm run test:e2e
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: playwright-results.json
+          PLAYWRIGHT_HTML_OPEN: never
+        run: npm run test:e2e -- --reporter=github,json,html
+
+      - name: End-to-end summary
+        if: always()
+        working-directory: frontend
+        run: |
+          [ -f playwright-results.json ] || exit 0
+          passed=$(jq '.stats.expected' playwright-results.json)
+          failed=$(jq '.stats.unexpected' playwright-results.json)
+          flaky=$(jq '.stats.flaky' playwright-results.json)
+          {
+            echo "### End-to-end"
+            echo ""
+            echo "API contract checks passed against the Compose stack."
+            echo ""
+            echo "| Browser tests passed | Failed | Flaky |"
+            echo "|---|---|---|"
+            echo "| $passed | $failed | $flaky |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the Playwright report on failure
         if: failure()
@@ -143,3 +236,95 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose down
+
+  # Publishes the coverage reports and badge data to GitHub Pages, so they can
+  # be read without signing in or downloading artifacts.
+  publish-reports:
+    name: Publish coverage reports
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend, frontend, integration]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: backend-report
+          path: site/backend
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-report
+          path: site/frontend
+
+      - name: Build badges and index page
+        env:
+          COMMIT: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Shields.io endpoint format: https://shields.io/badges/endpoint-badge
+          badge() {
+            local pct=$1 label=$2 color
+            color=$(awk -v p="$pct" 'BEGIN {
+              if (p >= 90) print "brightgreen"; else if (p >= 80) print "green";
+              else if (p >= 70) print "yellowgreen"; else if (p >= 60) print "yellow";
+              else print "red" }')
+            jq -n --arg label "$label" --arg message "$(printf '%.1f%%' "$pct")" --arg color "$color" \
+              '{schemaVersion: 1, label: $label, message: $message, color: $color}'
+          }
+
+          backend=$(jq '.coverage' site/backend/report.json)
+          backend_tests=$(jq '.passed' site/backend/report.json)
+          frontend=$(jq '.coverage' site/frontend/report.json)
+          frontend_tests=$(jq '.passed' site/frontend/report.json)
+
+          mkdir -p site/badges
+          badge "$backend" "backend coverage" > site/badges/backend.json
+          badge "$frontend" "frontend coverage" > site/badges/frontend.json
+
+          cat > site/index.html <<EOF
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Calculator App coverage</title>
+            <style>
+              body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 3rem auto; padding: 0 1rem; color: #24292f; }
+              table { border-collapse: collapse; width: 100%; margin: 1.5rem 0; }
+              th, td { text-align: left; padding: .6rem .8rem; border-bottom: 1px solid #d0d7de; }
+              a { color: #0969da; }
+              .muted { color: #57606a; font-size: .9rem; }
+            </style>
+          </head>
+          <body>
+            <h1>Calculator App coverage</h1>
+            <table>
+              <tr><th>Part</th><th>Tests passed</th><th>Coverage</th><th>Report</th></tr>
+              <tr><td>Backend (Go, internal/...)</td><td>${backend_tests}</td><td>$(printf '%.1f' "$backend")%</td><td><a href="backend/">Open</a></td></tr>
+              <tr><td>Frontend (React + TS, statements)</td><td>${frontend_tests}</td><td>$(printf '%.1f' "$frontend")%</td><td><a href="frontend/">Open</a></td></tr>
+            </table>
+            <p class="muted">Backend coverage excludes cmd/server, which only starts the process and is exercised by the end-to-end tests.</p>
+            <p class="muted">Built from commit <code>${COMMIT:0:7}</code> · <a href="${RUN_URL}">CI run</a> · <a href="${REPO_URL}">Repository</a></p>
+          </body>
+          </html>
+          EOF
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
