@@ -1,9 +1,15 @@
-export type Operation = "add" | "subtract" | "multiply" | "divide";
+/** Operations taking two operands, entered as `a <op> b`. */
+export type BinaryOperation = "add" | "subtract" | "multiply" | "divide" | "power";
+
+/** Operations applied to the displayed value on their own. */
+export type UnaryOperation = "sqrt" | "percent";
+
+export type Operation = BinaryOperation | UnaryOperation;
 
 export interface CalculateResult {
   operation: Operation;
   a: number;
-  b: number;
+  b?: number;
   result: number;
 }
 
@@ -18,18 +24,20 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 /**
  * Calls the backend's single calculate endpoint. The frontend never branches
  * on which operation was picked — it just forwards the operation name,
- * mirroring the backend's strategy-registry design.
+ * mirroring the backend's strategy-registry design. Omit `b` for unary
+ * operations; the backend rejects an operand count that doesn't match.
  */
 export async function calculate(
   operation: Operation,
   a: number,
-  b: number,
+  b?: number,
 ): Promise<CalculateResult> {
   let response: Response;
   try {
     response = await fetch(`${BASE_URL}/api/v1/calculate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // JSON.stringify drops undefined values, so a unary call sends no "b".
       body: JSON.stringify({ operation, a, b }),
     });
   } catch {
