@@ -28,19 +28,36 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
  */
 const REQUEST_TIMEOUT_MS = 8000;
 
+export interface CalculateRequest {
+  operation: Operation;
+  a: number;
+  /** Omitted for unary operations; the backend rejects a wrong operand count. */
+  b?: number;
+  /** Aborts the request when the caller no longer needs the answer. */
+  signal?: AbortSignal;
+}
+
 /**
  * Calls the backend's single calculate endpoint. The frontend never branches
  * on which operation was picked — it just forwards the operation name,
- * mirroring the backend's strategy-registry design. Omit `b` for unary
- * operations; the backend rejects an operand count that doesn't match.
+ * mirroring the backend's strategy-registry design.
  */
-export async function calculate(
-  operation: Operation,
-  a: number,
-  b?: number,
-): Promise<CalculateResult> {
+export async function calculate({
+  operation,
+  a,
+  b,
+  signal,
+}: CalculateRequest): Promise<CalculateResult> {
+  // The deadline and the caller's cancellation are the same concern - "this
+  // answer is no longer wanted" - so they drive one controller.
   const controller = new AbortController();
-  const deadline = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let timedOut = false;
+  const deadline = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
+  const cancel = () => controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
 
   let response: Response;
   try {
@@ -52,7 +69,11 @@ export async function calculate(
       signal: controller.signal,
     });
   } catch (err) {
-    const timedOut = err instanceof Error && err.name === "AbortError";
+    // A caller that cancelled deliberately gets the raw abort back, so it can
+    // tell "I stopped caring" apart from "the service failed".
+    if (signal?.aborted) {
+      throw err;
+    }
     throw new CalculatorApiError(
       timedOut
         ? "The calculator service took too long to respond"
@@ -60,6 +81,7 @@ export async function calculate(
     );
   } finally {
     clearTimeout(deadline);
+    signal?.removeEventListener("abort", cancel);
   }
 
   const body = await response.json().catch(() => null);

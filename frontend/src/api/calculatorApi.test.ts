@@ -13,7 +13,7 @@ describe("calculate", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await calculate("add", 2, 3);
+    const result = await calculate({ operation: "add", a: 2, b: 3 });
 
     expect(result).toEqual({ operation: "add", a: 2, b: 3, result: 5 });
     expect(fetchMock).toHaveBeenCalledWith(
@@ -34,8 +34,8 @@ describe("calculate", () => {
       }),
     );
 
-    await expect(calculate("divide", 1, 0)).rejects.toThrow(CalculatorApiError);
-    await expect(calculate("divide", 1, 0)).rejects.toThrow("division by zero");
+    await expect(calculate({ operation: "divide", a: 1, b: 0 })).rejects.toThrow(CalculatorApiError);
+    await expect(calculate({ operation: "divide", a: 1, b: 0 })).rejects.toThrow("division by zero");
   });
 
   it("rejects a 2xx response whose body isn't a usable result", async () => {
@@ -46,7 +46,7 @@ describe("calculate", () => {
       vi.fn().mockResolvedValue({ ok: true, json: async () => null }),
     );
 
-    await expect(calculate("multiply", 1e308, 1e308)).rejects.toThrow(
+    await expect(calculate({ operation: "multiply", a: 1e308, b: 1e308 })).rejects.toThrow(
       CalculatorApiError,
     );
   });
@@ -60,7 +60,7 @@ describe("calculate", () => {
       }),
     );
 
-    await expect(calculate("add", 1, 2)).rejects.toThrow(CalculatorApiError);
+    await expect(calculate({ operation: "add", a: 1, b: 2 })).rejects.toThrow(CalculatorApiError);
   });
 
   it("gives up on a request that never settles", async () => {
@@ -81,7 +81,7 @@ describe("calculate", () => {
       ),
     );
 
-    const pending = calculate("add", 1, 2);
+    const pending = calculate({ operation: "add", a: 1, b: 2 });
     const assertion = expect(pending).rejects.toThrow("took too long");
     await vi.advanceTimersByTimeAsync(10_000);
     await assertion;
@@ -95,8 +95,8 @@ describe("calculate", () => {
       vi.fn().mockRejectedValue(new TypeError("network error")),
     );
 
-    await expect(calculate("add", 1, 2)).rejects.toThrow(CalculatorApiError);
-    await expect(calculate("add", 1, 2)).rejects.toThrow(
+    await expect(calculate({ operation: "add", a: 1, b: 2 })).rejects.toThrow(CalculatorApiError);
+    await expect(calculate({ operation: "add", a: 1, b: 2 })).rejects.toThrow(
       "Could not reach the calculator service",
     );
   });
