@@ -132,6 +132,19 @@ environment) to point at a non-default backend URL; it defaults to
 go test ./... -cover
 ```
 
+Seed inputs for the fuzz target run as part of the normal suite; to explore
+past them:
+
+```bash
+go test ./internal/api -fuzz=FuzzCalculate
+```
+
+Benchmarks are opt-in:
+
+```bash
+go test ./internal/api -run XXX -bench . -benchmem
+```
+
 **Frontend** (from `frontend/`):
 
 ```bash
@@ -139,18 +152,49 @@ npm run test       # run once
 npm run coverage   # run with a coverage report
 ```
 
+**End-to-end** (from `frontend/`, against a running `docker compose up`):
+
+```bash
+npm run test:e2e
+```
+
 Both suites also run in CI on every push/PR to `main`, along with `gofmt`,
 `go vet`, `oxlint`, and `go test -race` (see
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
-**Contract smoke test.** Unit tests on each side mock the other — the frontend
-mocks its API client, the backend tests Go structs — so if the two stopped
-agreeing on the wire format, every test would still pass and the app would be
-broken. CI therefore also brings up the real `docker compose` stack and talks
-to it over HTTP: that the frontend is served, that `add` returns `result: 5`,
-that a unary response omits `b`, that division by zero returns a `400` with a
-displayable message, and that a request's `X-Request-Id` really does appear in
-the backend's logs.
+### What each layer is for
+
+**Unit tests** cover the pieces in isolation: the operation strategies, the
+handler's validation and error mapping, the middleware, the API client, the
+display formatters, and the keypad's state machine.
+
+**A fuzz target** (`FuzzCalculate`) throws arbitrary bodies at the endpoint
+and asserts the invariants that must always hold — never a 5xx, always valid
+JSON, and a `200` always carries a finite result. That last one is not
+theoretical: it is exactly what an earlier version violated by answering an
+overflowing calculation with `200 OK` and an empty body. Disabling the fix
+makes the seed corpus fail, so the test is known to catch the bug it was
+written for.
+
+**Benchmarks** keep an honest number against the claim that the server isn't
+the bottleneck — a calculation costs single-digit microseconds against a
+network round-trip measured in milliseconds. The parallel benchmark is also
+where "the registry is read-only and safe to share" stops being an assertion.
+
+**End-to-end tests** close the last gap. Unit tests on each side mock the
+other — the frontend mocks its API client, the backend tests Go structs — so
+if the two stopped agreeing on the wire format, or the keypad stopped being
+wired up, everything would still pass. CI brings up the real `docker compose`
+stack, checks the contract over HTTP (that `add` returns `result: 5`, that a
+unary response omits `b`, that division by zero returns a `400` with a
+displayable message, that a request's `X-Request-Id` reaches the backend
+logs), and then drives the actual UI in Chromium at desktop and phone
+viewports.
+
+That last layer earned its place immediately: it caught a bug the unit tests
+structurally could not. A clicked key kept browser focus, so pressing Enter
+afterwards re-fired *that* key instead of `=` — only reachable by mixing mouse
+and keyboard, which no unit test did.
 
 ## API
 

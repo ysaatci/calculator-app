@@ -46,10 +46,11 @@ jobs:
       - run: npm run coverage
 
   # Unit tests on either side mock the other, so nothing above would notice
-  # if the two stopped agreeing on the wire format. This runs the real
-  # containers and talks to them over HTTP.
+  # if the two stopped agreeing on the wire format - or if the keypad stopped
+  # being wired up at all. This runs the real containers, talks to them over
+  # HTTP, and then drives the real UI in a browser.
   integration:
-    name: Contract smoke test (docker compose)
+    name: End-to-end (docker compose)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,6 +111,30 @@ jobs:
           sleep 1
           docker compose logs backend | grep -q "$request_id" \
             || { echo "request id $request_id absent from backend logs"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install browser test tooling
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Drive the real UI
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Upload the Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
 
       - name: Show backend logs on failure
         if: failure()
