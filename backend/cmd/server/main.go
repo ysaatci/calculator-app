@@ -20,21 +20,20 @@ func main() {
 	// fields stay queryable instead of needing to be grepped out of prose.
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
-	addr := ":" + envOrDefault("PORT", "8080")
-	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
+	cfg := loadConfig()
 
 	registry := calculator.DefaultRegistry()
-	handler := api.NewRouter(registry, allowedOrigin)
+	handler := api.NewRouter(registry, cfg.allowedOrigin)
 
 	srv := &http.Server{
-		Addr:         addr,
+		Addr:         cfg.addr,
 		Handler:      handler,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 	}
 
 	go func() {
-		slog.Info("calculator API listening", "addr", addr)
+		slog.Info("calculator API listening", "addr", cfg.addr, "cors_origin", cfg.allowedOrigin)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("server error", "error", err)
 			os.Exit(1)
@@ -52,6 +51,24 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+// config is everything the process reads from its environment, gathered in
+// one place so the settings are visible together rather than fetched
+// wherever they happen to be needed.
+type config struct {
+	addr string
+	// allowedOrigin is the single browser origin permitted by CORS. Empty
+	// means no CORS headers at all, which is the right default for a server
+	// with no browser client in front of it.
+	allowedOrigin string
+}
+
+func loadConfig() config {
+	return config{
+		addr:          ":" + envOrDefault("PORT", "8080"),
+		allowedOrigin: os.Getenv("ALLOWED_ORIGIN"),
+	}
 }
 
 func envOrDefault(key, fallback string) string {
