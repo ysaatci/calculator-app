@@ -3,10 +3,17 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log"
+	"math"
 	"net/http"
 
 	"github.com/batusaatci/calculator-app/backend/internal/calculator"
 )
+
+// maxRequestBodyBytes caps how much of a request body we are willing to read.
+// A calculation request is a few dozen bytes; anything larger is a mistake or
+// an attempt to make the server allocate on our behalf.
+const maxRequestBodyBytes = 1 << 20 // 1 MiB
 
 // Handler holds the HTTP handlers for the calculator API. It depends only on
 // the calculator.Registry abstraction, so it never needs to change when new
@@ -21,8 +28,15 @@ func NewHandler(registry *calculator.Registry) *Handler {
 
 // Calculate handles POST /api/v1/calculate.
 func (h *Handler) Calculate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+
 	var req calculateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "request body must be valid JSON")
 		return
 	}
@@ -52,6 +66,14 @@ func (h *Handler) Calculate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Operands within float64 range can still produce a result that isn't,
+	// and JSON has no way to express Inf/NaN. Reject it explicitly rather
+	// than failing later at encoding time.
+	if math.IsInf(result, 0) || math.IsNaN(result) {
+		writeError(w, http.StatusBadRequest, "result is out of range")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, calculateResponse{
 		Operation: req.Operation,
 		A:         *req.A,
@@ -66,9 +88,21 @@ func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
+	// Encode before touching the status line: writing the header first and
+	// then failing to encode would leave the client with a successful-looking
+	// but empty response.
+	payload, err := json.Marshal(body)
+	if err != nil {
+		log.Printf("failed to encode response: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"internal server error"}`))
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	_, _ = w.Write(payload)
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

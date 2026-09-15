@@ -3,8 +3,13 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/batusaatci/calculator-app/backend/internal/calculator"
@@ -70,6 +75,8 @@ func TestCalculate_Errors(t *testing.T) {
 		{"non-numeric operand", `{"operation":"add","a":"x","b":2}`, http.StatusBadRequest},
 		{"unknown operation", `{"operation":"sqrt","a":4,"b":0}`, http.StatusBadRequest},
 		{"division by zero", `{"operation":"divide","a":1,"b":0}`, http.StatusBadRequest},
+		{"result overflows float64", `{"operation":"multiply","a":1e308,"b":1e308}`, http.StatusBadRequest},
+		{"result underflows to -Inf", `{"operation":"divide","a":-1e308,"b":1e-308}`, http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -88,6 +95,51 @@ func TestCalculate_Errors(t *testing.T) {
 				t.Fatalf("expected non-empty error message")
 			}
 		})
+	}
+}
+
+func TestCalculate_RejectsOversizedBody(t *testing.T) {
+	srv := newTestServer()
+
+	padding := strings.Repeat("0", maxRequestBodyBytes)
+	rec := doCalculate(t, srv, `{"operation":"add","a":1,"b":2,"padding":"`+padding+`"}`)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+
+	var got errorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON error response: %v", err)
+	}
+	if got.Error == "" {
+		t.Fatal("expected non-empty error message")
+	}
+}
+
+// A value json.Marshal can't encode must never leave the client with a
+// successful-looking empty response - the failure mode that made an
+// overflowing calculation return "200 OK" with no body.
+func TestWriteJSON_UnencodableBodyFailsLoudly(t *testing.T) {
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(os.Stderr)
+
+	rec := httptest.NewRecorder()
+	writeJSON(rec, http.StatusOK, math.Inf(1))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if rec.Body.Len() == 0 {
+		t.Fatal("expected a non-empty error body")
+	}
+
+	var got errorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON error response: %v", err)
+	}
+	if got.Error == "" {
+		t.Fatal("expected non-empty error message")
 	}
 }
 
