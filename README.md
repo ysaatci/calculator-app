@@ -73,8 +73,18 @@ docker compose up --build
 **Backend** (from `backend/`):
 
 ```bash
-go run ./cmd/server
+ALLOWED_ORIGIN=http://localhost:5173 go run ./cmd/server
 ```
+
+On Windows PowerShell:
+
+```powershell
+$env:ALLOWED_ORIGIN="http://localhost:5173"; go run ./cmd/server
+```
+
+`ALLOWED_ORIGIN` must be set to the frontend's dev-server origin, otherwise the
+browser blocks the response: the server sends CORS headers only for an origin
+you explicitly allow, so there is no permissive default to fall back on.
 
 Listens on `:8080` by default. Environment variables:
 
@@ -130,12 +140,13 @@ Success response (`200 OK`):
 { "operation": "add", "a": 2, "b": 3, "result": 5 }
 ```
 
-Error response (`400 Bad Request`) — for malformed JSON, missing/non-numeric
-operands, an unsupported operation, or division by zero:
+Error responses carry the same shape, `{"error": "..."}`:
 
-```json
-{ "error": "division by zero" }
-```
+| Status                      | When                                                                               |
+|-----------------------------|------------------------------------------------------------------------------------|
+| `400 Bad Request`           | Malformed JSON, missing/non-numeric operands, unsupported operation, division by zero, or a result outside float64 range |
+| `413 Payload Too Large`     | Request body over 1 MiB                                                              |
+| `405 Method Not Allowed`    | Any method other than `POST`                                                         |
 
 Examples with `curl`:
 
@@ -149,6 +160,11 @@ curl -X POST http://localhost:8080/api/v1/calculate \
   -H "Content-Type: application/json" \
   -d '{"operation":"divide","a":1,"b":0}'
 # {"error":"division by zero"}
+
+curl -X POST http://localhost:8080/api/v1/calculate \
+  -H "Content-Type: application/json" \
+  -d '{"operation":"multiply","a":1e308,"b":1e308}'
+# {"error":"result is out of range"}
 ```
 
 ### `GET /healthz`
@@ -182,6 +198,16 @@ validation failures — malformed JSON, missing operands, non-numeric operands,
 unknown operations, division by zero — return `400` with a `{"error": "..."}`
 body, since all of them are client input problems rather than server faults.
 
+Two related edge cases are handled explicitly rather than left to chance.
+Operands that are individually valid can still produce a result that isn't
+(`1e308 * 1e308` overflows to `+Inf`), and JSON cannot represent `Inf`/`NaN`,
+so the handler rejects non-finite results with a `400` instead of failing at
+encoding time. As a backstop, `writeJSON` serializes *before* writing the
+status line, so a value it cannot encode produces a `500` rather than a
+successful-looking empty `200`. Request bodies are capped at 1 MiB via
+`http.MaxBytesReader` so an oversized upload can't make the server allocate on
+a caller's behalf.
+
 **No extra operations in scope.** Exponentiation/sqrt/percentage were left out
 deliberately so the available time went into architecture and test coverage
 instead of feature count — and the strategy-registry design above is exactly
@@ -192,6 +218,12 @@ grid, display, operator keys) with a small state machine for digit entry,
 decimal handling, and operator chaining, rather than plain input boxes — this
 also makes `=` and the operator keys map directly onto the backend's single
 `/calculate` call.
+
+**Keyboard support.** Digits, `.`, `+ - * /`, `Enter`/`=`, and `Esc`/`C` all
+work from a physical keyboard. Every shortcut maps to a key that also exists
+on screen, so neither input method can do something the other can't — and the
+keypad is disabled while a request is in flight, so input can't be silently
+dropped by the response that replaces the display.
 
 **UI/UX heuristics applied to the keypad:**
 - *Fitts's Law* — every key stays at or above the ~44px minimum recommended
@@ -216,3 +248,9 @@ viewport without a separate mobile layout.
   cheap to add later.
 - A production TLS/reverse-proxy setup — `docker-compose.yml` is meant for
   local evaluation, not production deployment.
+- A backspace/undo key — the keypad has no such button, and adding it only to
+  the keyboard would put the two input methods out of sync.
+
+## License
+
+[MIT](LICENSE).
