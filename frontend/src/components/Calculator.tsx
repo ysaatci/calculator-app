@@ -1,14 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  calculate,
-  CalculatorApiError,
-  type BinaryOperation,
-  type Operation,
-  type UnaryOperation,
-} from "../api/calculatorApi";
-import { formatForDisplay, formatResult } from "../format";
+import { useEffect } from "react";
+import type { BinaryOperation, Operation, UnaryOperation } from "../api/calculatorApi";
+import { useCalculator } from "../calculator/useCalculator";
+import { formatForDisplay } from "../format";
 import "./Calculator.css";
 
+/** Compact glyphs, used on keys and in the pending-operation indicator. */
 const OPERATION_SYMBOLS: Record<Operation, string> = {
   add: "+",
   subtract: "−",
@@ -18,6 +14,19 @@ const OPERATION_SYMBOLS: Record<Operation, string> = {
   sqrt: "√",
   percent: "%",
 };
+
+/**
+ * Where a key reads better than its compact glyph. "xʸ" is the conventional
+ * label for a power key, but it is too wide for the indicator that sits under
+ * the running value, which uses "^" instead.
+ */
+const KEY_LABELS: Partial<Record<Operation, string>> = {
+  power: "xʸ",
+};
+
+function keyLabel(operation: Operation): string {
+  return KEY_LABELS[operation] ?? OPERATION_SYMBOLS[operation];
+}
 
 // Keyboard equivalents for the on-screen keys. Every shortcut maps to a key
 // that exists in the UI, so the two input methods stay in sync.
@@ -34,173 +43,20 @@ const KEY_TO_UNARY_OPERATION: Record<string, UnaryOperation> = {
   "%": "percent",
 };
 
-interface State {
-  display: string;
-  storedValue: number | null;
-  pendingOperation: BinaryOperation | null;
-  overwrite: boolean;
-  error: string | null;
-  loading: boolean;
-}
-
-const INITIAL_STATE: State = {
-  display: "0",
-  storedValue: null,
-  pendingOperation: null,
-  overwrite: false,
-  error: null,
-  loading: false,
-};
-
 export function Calculator() {
-  const [state, setState] = useState<State>(INITIAL_STATE);
-  const { display, pendingOperation, error, loading } = state;
-  const epochRef = useRef(0);
-
-  function inputDigit(digit: string) {
-    if (state.loading) {
-      return;
-    }
-    setState((s) => {
-      if (s.error) {
-        return { ...INITIAL_STATE, display: digit === "0" ? "0" : digit };
-      }
-      if (s.overwrite) {
-        return { ...s, display: digit, overwrite: false };
-      }
-      if (s.display === "0") {
-        return { ...s, display: digit };
-      }
-      return { ...s, display: s.display + digit };
-    });
-  }
-
-  function inputDecimal() {
-    if (state.loading) {
-      return;
-    }
-    setState((s) => {
-      if (s.error) {
-        return { ...INITIAL_STATE, display: "0." };
-      }
-      if (s.overwrite) {
-        return { ...s, display: "0.", overwrite: false };
-      }
-      if (s.display.includes(".")) {
-        return s;
-      }
-      return { ...s, display: s.display + "." };
-    });
-  }
-
-  // Clear stays available while a request is in flight, so a slow or dead
-  // backend can never trap the user with an unusable keypad. Bumping the
-  // epoch makes any reply that arrives afterwards land on the floor instead
-  // of overwriting the display the user just reset.
-  function clear() {
-    epochRef.current += 1;
-    setState(INITIAL_STATE);
-  }
-
-  async function chooseOperation(operation: BinaryOperation) {
-    // A calculation replaces the whole state when it resolves, so input
-    // accepted while one is in flight would be silently discarded.
-    if (state.loading) {
-      return;
-    }
-    if (state.error) {
-      setState({ ...INITIAL_STATE, storedValue: Number(state.display) || 0, pendingOperation: operation, overwrite: true });
-      return;
-    }
-
-    const currentValue = Number(state.display);
-
-    if (state.pendingOperation !== null && !state.overwrite) {
-      await runCalculation(state.pendingOperation, state.storedValue ?? 0, currentValue, operation);
-      return;
-    }
-
-    setState((s) => ({
-      ...s,
-      storedValue: currentValue,
-      pendingOperation: operation,
-      overwrite: true,
-    }));
-  }
-
-  async function equals() {
-    if (state.loading) {
-      return;
-    }
-    if (state.pendingOperation === null || state.storedValue === null || state.error) {
-      return;
-    }
-    await runCalculation(state.pendingOperation, state.storedValue, Number(state.display), null);
-  }
-
-  // Unary operations act on the displayed value straight away, the way the
-  // "%" and "√" keys do on a pocket calculator. Any pending binary operation
-  // is left untouched, so "5 + 9 √ =" still adds 5 to the root of 9.
-  async function applyUnaryOperation(operation: UnaryOperation) {
-    if (state.loading) {
-      return;
-    }
-    if (state.error) {
-      setState(INITIAL_STATE);
-      return;
-    }
-
-    const value = Number(state.display);
-    const epoch = epochRef.current;
-    setState((s) => ({ ...s, loading: true }));
-    try {
-      const { result } = await calculate(operation, value);
-      if (epoch !== epochRef.current) {
-        return;
-      }
-      setState((s) => ({
-        ...s,
-        display: formatResult(result),
-        overwrite: true,
-        error: null,
-        loading: false,
-      }));
-    } catch (err) {
-      if (epoch !== epochRef.current) {
-        return;
-      }
-      setState(failedState(err));
-    }
-  }
-
-  async function runCalculation(
-    operation: BinaryOperation,
-    a: number,
-    b: number,
-    nextPendingOperation: BinaryOperation | null,
-  ) {
-    const epoch = epochRef.current;
-    setState((s) => ({ ...s, loading: true }));
-    try {
-      const { result } = await calculate(operation, a, b);
-      if (epoch !== epochRef.current) {
-        return;
-      }
-      setState({
-        display: formatResult(result),
-        storedValue: nextPendingOperation ? result : null,
-        pendingOperation: nextPendingOperation,
-        overwrite: true,
-        error: null,
-        loading: false,
-      });
-    } catch (err) {
-      if (epoch !== epochRef.current) {
-        return;
-      }
-      setState(failedState(err));
-    }
-  }
+  const calculator = useCalculator();
+  const {
+    display,
+    pendingOperation,
+    error,
+    busy,
+    inputDigit,
+    inputDecimal,
+    clear,
+    chooseOperation,
+    applyUnaryOperation,
+    equals,
+  } = calculator;
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -246,9 +102,7 @@ export function Calculator() {
   return (
     <div className="calculator" role="group" aria-label="Calculator">
       <div className="calculator-display" data-testid="display" aria-live="polite">
-        <span className="calculator-display-value">
-          {loading ? "…" : formatForDisplay(display)}
-        </span>
+        <span className="calculator-display-value">{formatForDisplay(display)}</span>
         {pendingOperation && (
           <span className="calculator-display-operation">
             {OPERATION_SYMBOLS[pendingOperation]}
@@ -267,18 +121,18 @@ export function Calculator() {
             type="button"
             className="key key-function"
             onClick={() => applyUnaryOperation(operation)}
-            disabled={loading}
+            disabled={busy}
           >
-            {OPERATION_SYMBOLS[operation]}
+            {keyLabel(operation)}
           </button>
         ))}
         <button
           type="button"
           className="key key-function"
           onClick={() => chooseOperation("power")}
-          disabled={loading}
+          disabled={busy}
         >
-          x&#x02B8;
+          {keyLabel("power")}
         </button>
       </div>
       <div className="calculator-keypad" onMouseDown={keepFocusOffClickedKeys}>
@@ -291,14 +145,14 @@ export function Calculator() {
             type="button"
             className="key key-op"
             onClick={() => chooseOperation(operation)}
-            disabled={loading}
+            disabled={busy}
           >
-            {OPERATION_SYMBOLS[operation]}
+            {keyLabel(operation)}
           </button>
         ))}
 
         {["7", "8", "9"].map((d) => (
-          <button key={d} type="button" className="key" onClick={() => inputDigit(d)} disabled={loading}>
+          <button key={d} type="button" className="key" onClick={() => inputDigit(d)} disabled={busy}>
             {d}
           </button>
         ))}
@@ -306,24 +160,24 @@ export function Calculator() {
           type="button"
           className="key key-op key-tall"
           onClick={() => chooseOperation("add")}
-          disabled={loading}
+          disabled={busy}
         >
-          {OPERATION_SYMBOLS.add}
+          {keyLabel("add")}
         </button>
 
         {["4", "5", "6", "1", "2", "3"].map((d) => (
-          <button key={d} type="button" className="key" onClick={() => inputDigit(d)} disabled={loading}>
+          <button key={d} type="button" className="key" onClick={() => inputDigit(d)} disabled={busy}>
             {d}
           </button>
         ))}
-        <button type="button" className="key key-equals key-tall" onClick={equals} disabled={loading}>
+        <button type="button" className="key key-equals key-tall" onClick={equals} disabled={busy}>
           =
         </button>
 
-        <button type="button" className="key key-zero" onClick={() => inputDigit("0")} disabled={loading}>
+        <button type="button" className="key key-zero" onClick={() => inputDigit("0")} disabled={busy}>
           0
         </button>
-        <button type="button" className="key" onClick={inputDecimal} disabled={loading}>
+        <button type="button" className="key" onClick={inputDecimal} disabled={busy}>
           .
         </button>
       </div>
@@ -341,13 +195,3 @@ export function Calculator() {
 function keepFocusOffClickedKeys(event: React.MouseEvent) {
   event.preventDefault();
 }
-
-function failedState(err: unknown): State {
-  return {
-    ...INITIAL_STATE,
-    display: "Error",
-    overwrite: true,
-    error: err instanceof CalculatorApiError ? err.message : "Unexpected error",
-  };
-}
-

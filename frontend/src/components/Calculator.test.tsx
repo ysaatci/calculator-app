@@ -28,7 +28,7 @@ describe("Calculator", () => {
 
     await pressButtons(["2", "+", "3", "="])();
 
-    expect(calculateMock).toHaveBeenCalledWith("add", 2, 3);
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "add", a: 2, b: 3 }));
     expect(screen.getByTestId("display")).toHaveTextContent("5");
   });
 
@@ -39,7 +39,7 @@ describe("Calculator", () => {
     await pressButtons(["9", "√"])();
 
     // No second operand, and no "=" needed.
-    expect(calculateMock).toHaveBeenCalledWith("sqrt", 9);
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "sqrt", a: 9 }));
     expect(screen.getByTestId("display")).toHaveTextContent("3");
   });
 
@@ -48,12 +48,12 @@ describe("Calculator", () => {
     render(<Calculator />);
 
     await pressButtons(["5", "+", "9", "√"])();
-    expect(calculateMock).toHaveBeenLastCalledWith("sqrt", 9);
+    expect(calculateMock).toHaveBeenLastCalledWith(expect.objectContaining({ operation: "sqrt", a: 9 }));
 
     calculateMock.mockResolvedValue({ operation: "add", a: 5, b: 3, result: 8 });
     await pressButtons(["="])();
 
-    expect(calculateMock).toHaveBeenLastCalledWith("add", 5, 3);
+    expect(calculateMock).toHaveBeenLastCalledWith(expect.objectContaining({ operation: "add", a: 5, b: 3 }));
     expect(screen.getByTestId("display")).toHaveTextContent("8");
   });
 
@@ -63,7 +63,7 @@ describe("Calculator", () => {
 
     await pressButtons(["5", "0", "%"])();
 
-    expect(calculateMock).toHaveBeenCalledWith("percent", 50);
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "percent", a: 50 }));
     expect(screen.getByTestId("display")).toHaveTextContent("0.5");
   });
 
@@ -73,7 +73,7 @@ describe("Calculator", () => {
 
     await pressButtons(["2", "xʸ", "1", "0", "="])();
 
-    expect(calculateMock).toHaveBeenCalledWith("power", 2, 10);
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "power", a: 2, b: 10 }));
     expect(screen.getByTestId("display")).toHaveTextContent("1,024");
   });
 
@@ -105,7 +105,7 @@ describe("Calculator", () => {
 
     await pressButtons(["5", "÷", "0", "="])();
 
-    expect(calculateMock).toHaveBeenCalledWith("divide", 5, 0);
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "divide", a: 5, b: 0 }));
     expect(screen.getByTestId("display")).toHaveTextContent("Error");
     expect(screen.getByRole("alert")).toHaveTextContent("division by zero");
   });
@@ -146,7 +146,7 @@ describe("Calculator", () => {
     calculateMock.mockResolvedValue({ operation: "add", a: 0, b: 9, result: 9 });
     await pressButtons(["+", "9", "="])();
 
-    expect(calculateMock).toHaveBeenLastCalledWith("add", 0, 9);
+    expect(calculateMock).toHaveBeenLastCalledWith(expect.objectContaining({ operation: "add", a: 0, b: 9 }));
     expect(screen.getByTestId("display")).toHaveTextContent("9");
   });
 
@@ -157,7 +157,7 @@ describe("Calculator", () => {
 
     await user.keyboard("12+3{Enter}");
 
-    expect(calculateMock).toHaveBeenCalledWith("add", 12, 3);
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "add", a: 12, b: 3 }));
     expect(screen.getByTestId("display")).toHaveTextContent("15");
   });
 
@@ -167,12 +167,12 @@ describe("Calculator", () => {
     render(<Calculator />);
 
     await user.keyboard("16r");
-    expect(calculateMock).toHaveBeenLastCalledWith("sqrt", 16);
+    expect(calculateMock).toHaveBeenLastCalledWith(expect.objectContaining({ operation: "sqrt", a: 16 }));
 
     calculateMock.mockResolvedValue({ operation: "power", a: 4, b: 3, result: 64 });
     await user.keyboard("^3{Enter}");
 
-    expect(calculateMock).toHaveBeenLastCalledWith("power", 4, 3);
+    expect(calculateMock).toHaveBeenLastCalledWith(expect.objectContaining({ operation: "power", a: 4, b: 3 }));
     expect(screen.getByTestId("display")).toHaveTextContent("64");
   });
 
@@ -186,7 +186,7 @@ describe("Calculator", () => {
     await pressButtons(["C"])();
     await user.keyboard("48/6{Enter}");
 
-    expect(calculateMock).toHaveBeenCalledWith("divide", 48, 6);
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "divide", a: 48, b: 6 }));
     expect(screen.getByTestId("display")).toHaveTextContent("8");
   });
 
@@ -299,11 +299,11 @@ describe("Calculator", () => {
     render(<Calculator />);
 
     await pressButtons(["2", "+", "3", "×"])();
-    expect(calculateMock).toHaveBeenCalledWith("add", 2, 3);
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "add", a: 2, b: 3 }));
 
     calculateMock.mockResolvedValue({ operation: "multiply", a: 5, b: 4, result: 20 });
     await pressButtons(["4", "="])();
-    expect(calculateMock).toHaveBeenLastCalledWith("multiply", 5, 4);
+    expect(calculateMock).toHaveBeenLastCalledWith(expect.objectContaining({ operation: "multiply", a: 5, b: 4 }));
     expect(screen.getByTestId("display")).toHaveTextContent("20");
   });
 });
