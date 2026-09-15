@@ -9,6 +9,9 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
+    // Playwright specs drive a real browser against a running stack; Vitest
+    // would otherwise try to run them in jsdom and fail.
+    exclude: ['node_modules/**', 'e2e/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
