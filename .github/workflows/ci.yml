@@ -17,10 +17,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
       - run: go build ./...
-      - run: go test ./... -cover
+      # -race needs cgo, which isn't available on every dev machine but is
+      # free here, so concurrency bugs get caught in CI rather than in prod.
+      - run: go test ./... -race -cover
 
   frontend:
     name: Frontend (React + TS)
@@ -36,5 +41,80 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - run: npm run lint
       - run: npx tsc -b --noEmit
       - run: npm run coverage
+
+  # Unit tests on either side mock the other, so nothing above would notice
+  # if the two stopped agreeing on the wire format. This runs the real
+  # containers and talks to them over HTTP.
+  integration:
+    name: Contract smoke test (docker compose)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the stack
+        run: docker compose up -d --build --wait
+
+      - name: Frontend is served
+        run: |
+          curl --fail --silent --show-error http://localhost:3000 > /dev/null
+
+      - name: Backend answers the shape the frontend expects
+        run: |
+          set -euo pipefail
+
+          result=$(curl --fail --silent -X POST http://localhost:8080/api/v1/calculate \
+            -H 'Content-Type: application/json' \
+            -d '{"operation":"add","a":2,"b":3}' | jq -r '.result')
+          [ "$result" = "5" ] || { echo "add returned $result, want 5"; exit 1; }
+
+          # Unary operations must omit "b" rather than echoing a zero.
+          body=$(curl --fail --silent -X POST http://localhost:8080/api/v1/calculate \
+            -H 'Content-Type: application/json' \
+            -d '{"operation":"sqrt","a":9}')
+          echo "$body" | jq -e '.result == 3 and (has("b") | not)' > /dev/null \
+            || { echo "unexpected sqrt body: $body"; exit 1; }
+
+      - name: Errors carry a message the UI can display
+        run: |
+          set -euo pipefail
+
+          status=$(curl --silent --output /tmp/err.json --write-out '%{http_code}' \
+            -X POST http://localhost:8080/api/v1/calculate \
+            -H 'Content-Type: application/json' \
+            -d '{"operation":"divide","a":1,"b":0}')
+          [ "$status" = "400" ] || { echo "got status $status, want 400"; exit 1; }
+          jq -e '.error == "division by zero"' /tmp/err.json > /dev/null \
+            || { echo "unexpected error body: $(cat /tmp/err.json)"; exit 1; }
+
+      - name: Observability surfaces are live
+        run: |
+          set -euo pipefail
+
+          curl --fail --silent http://localhost:8080/metrics \
+            | grep -q 'calculator_calculations_total' \
+            || { echo "calculation metrics missing from /metrics"; exit 1; }
+
+          # Every response must carry an ID that can be traced back to a log line.
+          request_id=$(curl --fail --silent --output /dev/null --dump-header - \
+            -X POST http://localhost:8080/api/v1/calculate \
+            -H 'Content-Type: application/json' \
+            -d '{"operation":"add","a":1,"b":1}' \
+            | grep -i '^x-request-id:' | tr -d '\r' | awk '{print $2}')
+          [ -n "$request_id" ] || { echo "no X-Request-Id header"; exit 1; }
+
+          # The access log is written after the response is sent, so give it
+          # a moment rather than racing it.
+          sleep 1
+          docker compose logs backend | grep -q "$request_id" \
+            || { echo "request id $request_id absent from backend logs"; exit 1; }
+
+      - name: Show backend logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down
