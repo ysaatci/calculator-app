@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { Calculator } from "./Calculator";
 import * as api from "../api/calculatorApi";
-import { CalculatorApiError } from "../api/calculatorApi";
+import { CalculatorApiError, type CalculateResult } from "../api/calculatorApi";
 
 vi.mock("../api/calculatorApi", async () => {
   const actual = await vi.importActual<typeof api>("../api/calculatorApi");
@@ -89,6 +89,94 @@ describe("Calculator", () => {
 
     expect(calculateMock).toHaveBeenLastCalledWith("add", 0, 9);
     expect(screen.getByTestId("display")).toHaveTextContent("9");
+  });
+
+  it("accepts keyboard input as well as clicks", async () => {
+    const user = userEvent.setup();
+    calculateMock.mockResolvedValue({ operation: "add", a: 12, b: 3, result: 15 });
+    render(<Calculator />);
+
+    await user.keyboard("12+3{Enter}");
+
+    expect(calculateMock).toHaveBeenCalledWith("add", 12, 3);
+    expect(screen.getByTestId("display")).toHaveTextContent("15");
+  });
+
+  it("clears via the Escape key", async () => {
+    const user = userEvent.setup();
+    render(<Calculator />);
+
+    await user.keyboard("42");
+    expect(screen.getByTestId("display")).toHaveTextContent("42");
+
+    await user.keyboard("{Escape}");
+    expect(screen.getByTestId("display")).toHaveTextContent("0");
+  });
+
+  it("ignores further input while a calculation is in flight", async () => {
+    let resolveCalculation!: (value: CalculateResult) => void;
+    calculateMock.mockReturnValue(
+      new Promise<CalculateResult>((resolve) => {
+        resolveCalculation = resolve;
+      }),
+    );
+    render(<Calculator />);
+
+    await pressButtons(["2", "+", "3", "="])();
+
+    // Keys are disabled, so a stray press can't be discarded by the
+    // in-flight calculation when it replaces the state.
+    expect(screen.getByRole("button", { name: "7" })).toBeDisabled();
+    await pressButtons(["7"])();
+
+    await act(async () => {
+      resolveCalculation({ operation: "add", a: 2, b: 3, result: 5 });
+    });
+
+    expect(calculateMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("display")).toHaveTextContent("5");
+  });
+
+  it("ignores keystrokes while a calculation is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveCalculation!: (value: CalculateResult) => void;
+    calculateMock.mockReturnValue(
+      new Promise<CalculateResult>((resolve) => {
+        resolveCalculation = resolve;
+      }),
+    );
+    render(<Calculator />);
+
+    await user.keyboard("2+3{Enter}");
+    // Disabled buttons block the mouse; this guards the keyboard path.
+    await user.keyboard("7.9*{Escape}");
+
+    await act(async () => {
+      resolveCalculation({ operation: "add", a: 2, b: 3, result: 5 });
+    });
+
+    expect(calculateMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("display")).toHaveTextContent("5");
+  });
+
+  it("ignores unrelated keys and modifier shortcuts", async () => {
+    const user = userEvent.setup();
+    render(<Calculator />);
+
+    await user.keyboard("5");
+    await user.keyboard("{a}{F5}{Control>}9{/Control}");
+
+    expect(screen.getByTestId("display")).toHaveTextContent("5");
+    expect(calculateMock).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when equals is pressed with no pending operation", async () => {
+    render(<Calculator />);
+
+    await pressButtons(["8", "="])();
+
+    expect(calculateMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("display")).toHaveTextContent("8");
   });
 
   it("chains operations without pressing equals in between", async () => {

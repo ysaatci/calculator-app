@@ -70,6 +70,11 @@
   outline-offset: 2px;
 }
 
+.key:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
 .key-op {
   background: #f0a02c;
 }

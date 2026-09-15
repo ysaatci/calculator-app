@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { calculate, CalculatorApiError, type Operation } from "../api/calculatorApi";
 import "./Calculator.css";
 
@@ -7,6 +7,15 @@ const OPERATION_SYMBOLS: Record<Operation, string> = {
   subtract: "−",
   multiply: "×",
   divide: "÷",
+};
+
+// Keyboard equivalents for the on-screen keys. Every shortcut maps to a key
+// that exists in the UI, so the two input methods stay in sync.
+const KEY_TO_OPERATION: Record<string, Operation> = {
+  "+": "add",
+  "-": "subtract",
+  "*": "multiply",
+  "/": "divide",
 };
 
 interface State {
@@ -32,6 +41,9 @@ export function Calculator() {
   const { display, pendingOperation, error, loading } = state;
 
   function inputDigit(digit: string) {
+    if (state.loading) {
+      return;
+    }
     setState((s) => {
       if (s.error) {
         return { ...INITIAL_STATE, display: digit === "0" ? "0" : digit };
@@ -47,6 +59,9 @@ export function Calculator() {
   }
 
   function inputDecimal() {
+    if (state.loading) {
+      return;
+    }
     setState((s) => {
       if (s.error) {
         return { ...INITIAL_STATE, display: "0." };
@@ -66,6 +81,11 @@ export function Calculator() {
   }
 
   async function chooseOperation(operation: Operation) {
+    // A calculation replaces the whole state when it resolves, so input
+    // accepted while one is in flight would be silently discarded.
+    if (state.loading) {
+      return;
+    }
     if (state.error) {
       setState({ ...INITIAL_STATE, storedValue: Number(state.display) || 0, pendingOperation: operation, overwrite: true });
       return;
@@ -87,6 +107,9 @@ export function Calculator() {
   }
 
   async function equals() {
+    if (state.loading) {
+      return;
+    }
     if (state.pendingOperation === null || state.storedValue === null || state.error) {
       return;
     }
@@ -123,6 +146,45 @@ export function Calculator() {
     }
   }
 
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+      // A focused key already activates itself on Enter/Space; handling the
+      // event here as well would apply the same press twice.
+      const activatingFocusedKey =
+        document.activeElement instanceof HTMLButtonElement &&
+        (event.key === "Enter" || event.key === " ");
+      if (activatingFocusedKey) {
+        return;
+      }
+
+      const { key } = event;
+
+      if (key >= "0" && key <= "9") {
+        inputDigit(key);
+      } else if (key === "." || key === ",") {
+        inputDecimal();
+      } else if (key in KEY_TO_OPERATION) {
+        void chooseOperation(KEY_TO_OPERATION[key]);
+      } else if (key === "Enter" || key === "=") {
+        void equals();
+      } else if (key === "Escape" || key === "c" || key === "C") {
+        clear();
+      } else {
+        return;
+      }
+
+      event.preventDefault();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // Deliberately re-subscribed on every render: the handlers close over the
+    // current state, so a stale listener would act on stale operands.
+  });
+
   return (
     <div className="calculator" role="group" aria-label="Calculator">
       <div className="calculator-display" data-testid="display" aria-live="polite">
@@ -141,47 +203,48 @@ export function Calculator() {
         </div>
       )}
       <div className="calculator-keypad">
-        <button className="key key-clear" onClick={clear}>
+        <button type="button" className="key key-clear" onClick={clear} disabled={loading}>
           C
         </button>
-        <button className="key key-op" onClick={() => chooseOperation("divide")}>
-          {OPERATION_SYMBOLS.divide}
-        </button>
-        <button className="key key-op" onClick={() => chooseOperation("multiply")}>
-          {OPERATION_SYMBOLS.multiply}
-        </button>
-        <button className="key key-op" onClick={() => chooseOperation("subtract")}>
-          {OPERATION_SYMBOLS.subtract}
-        </button>
+        {(["divide", "multiply", "subtract"] as const).map((operation) => (
+          <button
+            key={operation}
+            type="button"
+            className="key key-op"
+            onClick={() => chooseOperation(operation)}
+            disabled={loading}
+          >
+            {OPERATION_SYMBOLS[operation]}
+          </button>
+        ))}
 
         {["7", "8", "9"].map((d) => (
-          <button key={d} className="key" onClick={() => inputDigit(d)}>
+          <button key={d} type="button" className="key" onClick={() => inputDigit(d)} disabled={loading}>
             {d}
           </button>
         ))}
-        <button className="key key-op key-tall" onClick={() => chooseOperation("add")}>
+        <button
+          type="button"
+          className="key key-op key-tall"
+          onClick={() => chooseOperation("add")}
+          disabled={loading}
+        >
           {OPERATION_SYMBOLS.add}
         </button>
 
-        {["4", "5", "6"].map((d) => (
-          <button key={d} className="key" onClick={() => inputDigit(d)}>
+        {["4", "5", "6", "1", "2", "3"].map((d) => (
+          <button key={d} type="button" className="key" onClick={() => inputDigit(d)} disabled={loading}>
             {d}
           </button>
         ))}
-
-        {["1", "2", "3"].map((d) => (
-          <button key={d} className="key" onClick={() => inputDigit(d)}>
-            {d}
-          </button>
-        ))}
-        <button className="key key-equals key-tall" onClick={equals}>
+        <button type="button" className="key key-equals key-tall" onClick={equals} disabled={loading}>
           =
         </button>
 
-        <button className="key key-zero" onClick={() => inputDigit("0")}>
+        <button type="button" className="key key-zero" onClick={() => inputDigit("0")} disabled={loading}>
           0
         </button>
-        <button className="key" onClick={inputDecimal}>
+        <button type="button" className="key" onClick={inputDecimal} disabled={loading}>
           .
         </button>
       </div>
