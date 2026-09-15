@@ -38,6 +38,31 @@ describe("calculate", () => {
     await expect(calculate("divide", 1, 0)).rejects.toThrow("division by zero");
   });
 
+  it("rejects a 2xx response whose body isn't a usable result", async () => {
+    // A backend that fails to encode its response can still return 200 with
+    // an empty body; blindly trusting it would surface as a crash later.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => null }),
+    );
+
+    await expect(calculate("multiply", 1e308, 1e308)).rejects.toThrow(
+      CalculatorApiError,
+    );
+  });
+
+  it("rejects a result that isn't a finite number", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ operation: "add", a: 1, b: 2, result: "three" }),
+      }),
+    );
+
+    await expect(calculate("add", 1, 2)).rejects.toThrow(CalculatorApiError);
+  });
+
   it("throws CalculatorApiError when the network request fails", async () => {
     vi.stubGlobal(
       "fetch",

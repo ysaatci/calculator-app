@@ -44,5 +44,18 @@ export async function calculate(
     throw new CalculatorApiError(message);
   }
 
-  return body as CalculateResult;
+  if (!isCalculateResult(body)) {
+    throw new CalculatorApiError("Unexpected response from the calculator service");
+  }
+
+  return body;
+}
+
+function isCalculateResult(body: unknown): body is CalculateResult {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    typeof (body as CalculateResult).result === "number" &&
+    Number.isFinite((body as CalculateResult).result)
+  );
 }
