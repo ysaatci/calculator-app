@@ -129,7 +129,9 @@ export function useCalculator() {
 
   return {
     display: displayText(state),
-    pendingOperation: state.pending?.operation ?? null,
+    // The whole pending operation, so the display can show the sum being
+    // built ("5 +") rather than just an operator floating on its own.
+    pending: state.pending,
     error: state.view.kind === "error" ? state.view.message : null,
     busy: state.view.kind === "busy",
     operand: currentOperand(state),

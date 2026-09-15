@@ -84,6 +84,48 @@ test("groups long results into thousands", async ({ page }) => {
   await expect(display(page)).toHaveText("998,001");
 });
 
+test("shows the sum being built above the value", async ({ page }) => {
+  await press(page, "1", "2", "+");
+  await expect(page.getByTestId("expression")).toHaveText("12 +");
+
+  await press(page, "8", "=");
+  await expect(display(page)).toHaveText("20");
+  // The expression clears once the sum is settled.
+  await expect(page.getByTestId("expression")).toHaveText("");
+});
+
+test("never shifts the keypad, whatever the display says", async ({ page }) => {
+  const keypadTop = async () =>
+    (await page.locator(".calculator-keypad").boundingBox())?.y;
+
+  const idle = await keypadTop();
+
+  await press(page, "5", "+");
+  expect(await keypadTop()).toBe(idle);
+
+  await press(page, "C", "5", "÷", "0", "=");
+  await expect(display(page)).toHaveText("Error");
+  expect(await keypadTop()).toBe(idle);
+});
+
+test("draws square keys as circles rather than ellipses", async ({ page }) => {
+  // border-radius: 50% on a non-square box gives an ellipse, which is what
+  // made these look subtly off against the phone keypad they imitate.
+  const ratios = await page.evaluate(() =>
+    [...document.querySelectorAll(".calculator-keypad .key")]
+      .filter((key) => /^[1-9]$/.test(key.textContent?.trim() ?? ""))
+      .map((key) => {
+        const { width, height } = key.getBoundingClientRect();
+        return width / height;
+      }),
+  );
+
+  expect(ratios.length).toBeGreaterThan(0);
+  for (const ratio of ratios) {
+    expect(ratio).toBeCloseTo(1, 1);
+  }
+});
+
 test("stays usable without sideways scrolling", async ({ page }) => {
   const overflows = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth,

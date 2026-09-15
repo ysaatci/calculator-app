@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { BinaryOperation, Operation, UnaryOperation } from "../api/calculatorApi";
 import { useCalculator } from "../calculator/useCalculator";
-import { formatForDisplay } from "../format";
+import { formatForDisplay, formatResult } from "../format";
 import "./Calculator.css";
 
 /** Compact glyphs, used on keys and in the pending-operation indicator. */
@@ -47,7 +47,7 @@ export function Calculator() {
   const calculator = useCalculator();
   const {
     display,
-    pendingOperation,
+    pending,
     error,
     busy,
     inputDigit,
@@ -101,19 +101,25 @@ export function Calculator() {
 
   return (
     <div className="calculator" role="group" aria-label="Calculator">
-      <div className="calculator-display" data-testid="display" aria-live="polite">
-        <span className="calculator-display-value">{formatForDisplay(display)}</span>
-        {pendingOperation && (
-          <span className="calculator-display-operation">
-            {OPERATION_SYMBOLS[pendingOperation]}
-          </span>
-        )}
+      <div className="calculator-display">
+        {/*
+          One line for whatever context the value needs: the sum being built,
+          or why it failed. Always present in the layout, so neither pressing
+          an operator nor hitting an error shifts the keypad.
+        */}
+        <span
+          className={`calculator-display-context${error ? " calculator-display-context-error" : ""}`}
+          role={error ? "alert" : undefined}
+          data-testid="expression"
+        >
+          {error ??
+            (pending &&
+              `${formatForDisplay(formatResult(pending.operand))} ${OPERATION_SYMBOLS[pending.operation]}`)}
+        </span>
+        <span className="calculator-display-value" data-testid="display" aria-live="polite">
+          {formatForDisplay(display)}
+        </span>
       </div>
-      {error && (
-        <div className="calculator-error" role="alert">
-          {error}
-        </div>
-      )}
       <div className="calculator-functions" onMouseDown={keepFocusOffClickedKeys}>
         {(["sqrt", "percent"] as const).map((operation) => (
           <button
