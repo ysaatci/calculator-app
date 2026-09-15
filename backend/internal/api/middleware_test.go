@@ -62,6 +62,20 @@ func TestLogging_RecordsDownstreamStatus(t *testing.T) {
 	}
 }
 
+// A handler behind the middleware must be able to use everything the real
+// writer supports, or the wrapper isn't a faithful stand-in for it.
+func TestStatusWriter_KeepsOptionalCapabilitiesReachable(t *testing.T) {
+	rec := httptest.NewRecorder()
+	wrapped := &statusWriter{ResponseWriter: rec, status: http.StatusOK}
+
+	if err := http.NewResponseController(wrapped).Flush(); err != nil {
+		t.Fatalf("flushing through the wrapper: %v", err)
+	}
+	if !rec.Flushed {
+		t.Fatal("flush did not reach the underlying writer")
+	}
+}
+
 func TestRequestID_IsReturnedAndReadableDownstream(t *testing.T) {
 	var seen string
 	srv := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

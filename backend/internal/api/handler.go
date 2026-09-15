@@ -16,67 +16,49 @@ import (
 // an attempt to make the server allocate on our behalf.
 const maxRequestBodyBytes = 1 << 20 // 1 MiB
 
-// Handler holds the HTTP handlers for the calculator API. It depends only on
-// the calculator.Registry abstraction, so it never needs to change when new
-// operations are added to the registry.
-type Handler struct {
-	registry *calculator.Registry
+// OperationResolver finds the operation a client asked for by name. The
+// handler needs nothing more from a source of operations, so it asks for
+// this rather than a concrete registry.
+type OperationResolver interface {
+	Get(name string) (calculator.Operation, error)
 }
 
-func NewHandler(registry *calculator.Registry) *Handler {
-	return &Handler{registry: registry}
+// Handler holds the HTTP handlers for the calculator API. It never names a
+// specific operation, so it doesn't change when operations are added.
+type Handler struct {
+	operations OperationResolver
+}
+
+func NewHandler(operations OperationResolver) *Handler {
+	return &Handler{operations: operations}
 }
 
 // Calculate handles POST /api/v1/calculate.
 func (h *Handler) Calculate(w http.ResponseWriter, r *http.Request) {
 	// Recorded on every exit path. The operation stays "unknown" until the
-	// registry confirms it, so an arbitrary name from a client can never
+	// resolver confirms it, so an arbitrary name from a client can never
 	// become a metric label.
 	operation := metrics.UnknownOperation
 	outcome := metrics.OutcomeInvalidRequest
 	defer func() { metrics.Calculations.WithLabelValues(operation, outcome).Inc() }()
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
-
-	var req calculateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			h.reject(w, r, http.StatusRequestEntityTooLarge, "request body too large")
-			return
-		}
-		h.reject(w, r, http.StatusBadRequest, "request body must be valid JSON")
+	req, problem := decodeCalculateRequest(w, r)
+	if problem != nil {
+		h.reject(w, r, problem.status, problem.message)
 		return
 	}
 
-	if req.Operation == "" {
-		h.reject(w, r, http.StatusBadRequest, "\"operation\" is required")
-		return
-	}
-	if req.A == nil {
-		h.reject(w, r, http.StatusBadRequest, "\"a\" is a required number")
-		return
-	}
-
-	op, err := h.registry.Get(req.Operation)
+	op, err := h.operations.Get(req.Operation)
 	if err != nil {
 		h.reject(w, r, http.StatusBadRequest, "unsupported operation: "+req.Operation)
 		return
 	}
 	operation = op.Name()
 
-	// How many operands an operation takes is part of its contract, and
-	// supplying the wrong number is a client error like any other.
-	operands := []float64{*req.A}
-	switch {
-	case op.Arity() == 2 && req.B == nil:
-		h.reject(w, r, http.StatusBadRequest, req.Operation+" needs two operands, \"a\" and \"b\"")
+	operands, problem := operandsFor(op, req)
+	if problem != nil {
+		h.reject(w, r, problem.status, problem.message)
 		return
-	case op.Arity() == 1 && req.B != nil:
-		h.reject(w, r, http.StatusBadRequest, req.Operation+" takes a single operand, \"a\"")
-		return
-	case op.Arity() == 2:
-		operands = append(operands, *req.B)
 	}
 
 	result, err := op.Apply(operands...)
@@ -105,6 +87,60 @@ func (h *Handler) Calculate(w http.ResponseWriter, r *http.Request) {
 		B:         req.B,
 		Result:    result,
 	})
+}
+
+// requestProblem is a request the client got wrong, with the status and the
+// message to answer it with.
+type requestProblem struct {
+	status  int
+	message string
+}
+
+func badRequest(message string) *requestProblem {
+	return &requestProblem{status: http.StatusBadRequest, message: message}
+}
+
+// decodeCalculateRequest reads the body and checks it has the fields every
+// calculation needs. Checks that depend on which operation was asked for
+// happen once the operation is known.
+func decodeCalculateRequest(w http.ResponseWriter, r *http.Request) (calculateRequest, *requestProblem) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+
+	var req calculateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return req, &requestProblem{status: http.StatusRequestEntityTooLarge, message: "request body too large"}
+		}
+		return req, badRequest("request body must be valid JSON")
+	}
+
+	if req.Operation == "" {
+		return req, badRequest(`"operation" is required`)
+	}
+	if req.A == nil {
+		return req, badRequest(`"a" is a required number`)
+	}
+	return req, nil
+}
+
+// operandsFor collects the operands the request supplied and checks the
+// count against the operation's arity. The check itself is one comparison for
+// every operation; only the wording differs, naming the fields the request
+// format has.
+func operandsFor(op calculator.Operation, req calculateRequest) ([]float64, *requestProblem) {
+	operands := []float64{*req.A}
+	if req.B != nil {
+		operands = append(operands, *req.B)
+	}
+
+	if len(operands) == op.Arity() {
+		return operands, nil
+	}
+	if op.Arity() == 1 {
+		return nil, badRequest(req.Operation + ` takes a single operand, "a"`)
+	}
+	return nil, badRequest(req.Operation + ` needs two operands, "a" and "b"`)
 }
 
 // Health handles GET /healthz.

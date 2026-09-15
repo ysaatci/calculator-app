@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -55,6 +56,43 @@ func TestCalculate_RecordsOutcomePerOperation(t *testing.T) {
 				t.Fatalf("counter went %v -> %v, want +1", before, after)
 			}
 		})
+	}
+}
+
+// failingOperation stands in for an operation whose failure isn't one of the
+// calculator package's own sentinel errors.
+type failingOperation struct{}
+
+func (failingOperation) Name() string                      { return "flaky" }
+func (failingOperation) Arity() int                        { return 1 }
+func (failingOperation) Apply(...float64) (float64, error) { return 0, errors.New("not today") }
+
+type stubResolver map[string]calculator.Operation
+
+func (s stubResolver) Get(name string) (calculator.Operation, error) {
+	if op, ok := s[name]; ok {
+		return op, nil
+	}
+	return nil, calculator.ErrUnknownOperation
+}
+
+// The handler only needs something that resolves names to operations, which
+// is what lets it be driven by operations the default registry doesn't have.
+func TestCalculate_WorksWithAnyOperationResolver(t *testing.T) {
+	discardLogs(t)
+	srv := NewRouter(stubResolver{"flaky": failingOperation{}}, "")
+
+	rec := doCalculate(t, srv, `{"operation":"flaky","a":1}`)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	var got errorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON error response: %v", err)
+	}
+	if got.Error != "not today" {
+		t.Fatalf("error = %q, want the operation's own message", got.Error)
 	}
 }
 

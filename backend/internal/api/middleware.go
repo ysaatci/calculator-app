@@ -129,6 +129,15 @@ func (w *statusWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+// Unwrap lets http.ResponseController reach the writer underneath. Embedding
+// alone forwards only the methods of http.ResponseWriter itself, so without
+// this a handler behind the middleware couldn't flush or hijack even when the
+// real writer supports it - the wrapper would quietly behave differently from
+// the thing it stands in for.
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func newRequestID() string {
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {
