@@ -424,6 +424,21 @@ clearing invalidates the in-flight request by bumping an epoch counter that a
 late reply is checked against. Requests also carry an 8 second deadline, so a
 connection that never answers surfaces as an error rather than a spinner.
 
+**One shape rule for the keypad.** `border-radius: 50%` on a non-square box
+draws an ellipse, which is what made the keys look subtly wrong next to the
+phone calculator they imitate — Jakob's Law cuts both ways, and circular keys
+are the convention's most recognisable trait. A pill radius on a square key
+gives a true circle, and the keys that deliberately aren't square (the wide
+zero, the tall operators, the function row) become clean pills from the same
+rule. An end-to-end test asserts the digit keys stay square, since "it looks
+right" is otherwise nobody's job to check.
+
+**The display carries one line of context.** Above the value sits either the
+sum being built (`12 +`) or why it failed (`division by zero`) — the reading
+order a written calculation has. It occupies its line even when empty, so
+neither pressing an operator nor hitting an error shifts the keypad under the
+user's finger, which an end-to-end test also pins down.
+
 **UI/UX heuristics applied to the keypad:**
 - *Fitts's Law* — every key stays at or above the ~44px minimum recommended
   touch-target size, even on small phones, and primary keys (operators, `=`)
