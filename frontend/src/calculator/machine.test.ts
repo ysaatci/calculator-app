@@ -91,6 +91,54 @@ describe("pending operations", () => {
   });
 });
 
+// What the next operator does depends on how the displayed value came to be,
+// so each way of arriving at a value has to record it distinctly.
+describe("entry", () => {
+  const entryOf = (state: State) => (state.view.kind === "value" ? state.view.entry : null);
+
+  it("is typing while digits are entered", () => {
+    expect(entryOf(run({ type: "digitPressed", digit: "4" }))).toBe("typing");
+  });
+
+  it("is awaiting once an operator has taken the value as its operand", () => {
+    const state = run(
+      { type: "digitPressed", digit: "5" },
+      { type: "operationPending", operation: "add", operand: 5 },
+    );
+    expect(entryOf(state)).toBe("awaiting");
+  });
+
+  it("is awaiting after a chained result, which is the next operation's operand", () => {
+    const state = run(
+      { type: "operationPending", operation: "add", operand: 2 },
+      { type: "calculationStarted" },
+      { type: "resultChained", result: 5, operation: "multiply" },
+    );
+    expect(entryOf(state)).toBe("awaiting");
+  });
+
+  it("is computed after a unary result, which is an operand in its own right", () => {
+    const state = run(
+      { type: "operationPending", operation: "add", operand: 5 },
+      { type: "calculationStarted" },
+      { type: "unaryResultShown", result: 3 },
+    );
+    expect(entryOf(state)).toBe("computed");
+  });
+
+  it("is computed after equals", () => {
+    expect(entryOf(run({ type: "resultShown", result: 8 }))).toBe("computed");
+  });
+
+  it.each(["awaiting", "computed"] as const)(
+    "starts a new number when a digit follows %s",
+    (entry) => {
+      const state: State = { view: { kind: "value", display: "5", entry }, pending: null };
+      expect(displayText(reducer(state, { type: "digitPressed", digit: "7" }))).toBe("7");
+    },
+  );
+});
+
 describe("in-flight calculations", () => {
   it("shows a placeholder rather than a stale value", () => {
     const state = run({ type: "digitPressed", digit: "9" }, { type: "calculationStarted" });

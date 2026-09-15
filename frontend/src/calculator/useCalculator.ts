@@ -84,9 +84,11 @@ export function useCalculator() {
     const operand = Number(state.view.display);
     const { pending } = state;
 
-    // A second operator with a fresh operand typed in between means the
-    // first calculation is due now: 2 + 3 × resolves 2 + 3 before chaining.
-    if (pending && !state.view.overwrite) {
+    // A second operand in hand - typed, or produced by a unary key - means the
+    // pending calculation is due now: 2 + 3 × resolves 2 + 3 before chaining,
+    // and so does 5 + 9 √ ×. Only when the display is still the pending
+    // operation's own operand is the new operator a replacement: 5 + × is ×.
+    if (pending && state.view.entry !== "awaiting") {
       await run(
         (signal) =>
           calculate({ operation: pending.operation, a: pending.operand, b: operand, signal }),

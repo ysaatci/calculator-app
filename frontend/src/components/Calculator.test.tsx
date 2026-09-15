@@ -306,4 +306,53 @@ describe("Calculator", () => {
     expect(calculateMock).toHaveBeenLastCalledWith(expect.objectContaining({ operation: "multiply", a: 5, b: 4 }));
     expect(screen.getByTestId("display")).toHaveTextContent("20");
   });
+
+  // The pending "5 +" used to be thrown away here, giving 3 × 2 = 6. A unary
+  // result is a real operand, so the operator after it has to resolve the
+  // sum in progress before chaining.
+  it("resolves a pending sum when an operator follows a unary result", async () => {
+    calculateMock.mockImplementation(async ({ operation, a, b }) => {
+      const results: Record<string, number> = { sqrt: 3, add: 8, multiply: 16 };
+      return { operation, a, b, result: results[operation] };
+    });
+    render(<Calculator />);
+
+    await pressButtons(["5", "+", "9", "√", "×", "2", "="])();
+
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "add", a: 5, b: 3 }));
+    expect(calculateMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ operation: "multiply", a: 8, b: 2 }),
+    );
+    expect(screen.getByTestId("display")).toHaveTextContent("16");
+  });
+
+  // The guard against the obvious over-correction: straight after a chained
+  // result, the displayed value is still the pending operation's own operand,
+  // so a second operator must switch the operator rather than calculate.
+  it("switches the operator when a second one follows a chained result", async () => {
+    calculateMock.mockImplementation(async ({ operation, a, b }) => {
+      const results: Record<string, number> = { add: 5, subtract: 1 };
+      return { operation, a, b, result: results[operation] };
+    });
+    render(<Calculator />);
+
+    await pressButtons(["2", "+", "3", "×", "−", "4", "="])();
+
+    // 2 + 3 resolves once; × is then replaced by −, never evaluated as 5 × 5.
+    expect(calculateMock).toHaveBeenCalledTimes(2);
+    expect(calculateMock).not.toHaveBeenCalledWith(expect.objectContaining({ operation: "multiply" }));
+    expect(calculateMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ operation: "subtract", a: 5, b: 4 }),
+    );
+  });
+
+  it("switches the operator when a second one follows the first directly", async () => {
+    calculateMock.mockResolvedValue({ operation: "multiply", a: 5, b: 3, result: 15 });
+    render(<Calculator />);
+
+    await pressButtons(["5", "+", "×", "3", "="])();
+
+    expect(calculateMock).toHaveBeenCalledTimes(1);
+    expect(calculateMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "multiply", a: 5, b: 3 }));
+  });
 });

@@ -48,6 +48,21 @@ test("keeps a pending operation while a unary key is used", async ({ page }) => 
   await expect(display(page)).toHaveText("8");
 });
 
+test("resolves a pending sum when an operator follows a unary key", async ({ page }) => {
+  // Once gave 3 × 2 = 6: the "5 +" was dropped when × arrived after √.
+  await press(page, "5", "+", "9", "√", "×");
+  await expect(page.getByTestId("expression")).toHaveText("8 ×");
+
+  await press(page, "2", "=");
+  await expect(display(page)).toHaveText("16");
+});
+
+test("switches operator rather than calculating when two arrive in a row", async ({ page }) => {
+  await press(page, "2", "+", "3", "×", "−", "4", "=");
+  // (2 + 3) − 4, with the × replaced and never evaluated.
+  await expect(display(page)).toHaveText("1");
+});
+
 test("shows the backend's error message for division by zero", async ({ page }) => {
   await press(page, "5", "÷", "0", "=");
 

@@ -21,8 +21,28 @@ export interface Pending {
   operand: number;
 }
 
+/**
+ * How the displayed value came to be, which decides what the next key does.
+ *
+ * - `typing`   — digits the user is entering. The next digit appends.
+ * - `awaiting` — the value is the pending operation's own first operand,
+ *                shown while nothing has been typed for the second. The next
+ *                digit starts that second operand; another operator just
+ *                replaces the pending one (`5 + ×` means ×).
+ * - `computed` — a result standing on its own. The next digit starts afresh,
+ *                but an operator treats it as a genuine operand
+ *                (`5 + 9 √ ×` resolves 5 + 3 before chaining).
+ *
+ * This used to be a single `overwrite` flag. `awaiting` and `computed` both
+ * set it, since in both the next digit replaces the display, but they need
+ * opposite answers when an operator comes next - and a boolean couldn't tell
+ * them apart, so a unary result followed by an operator discarded the sum in
+ * progress.
+ */
+export type Entry = "typing" | "awaiting" | "computed";
+
 export type View =
-  | { kind: "value"; display: string; overwrite: boolean }
+  | { kind: "value"; display: string; entry: Entry }
   | { kind: "busy" }
   | { kind: "error"; message: string };
 
@@ -32,7 +52,7 @@ export interface State {
 }
 
 export const initialState: State = {
-  view: { kind: "value", display: "0", overwrite: false },
+  view: { kind: "value", display: "0", entry: "typing" },
   pending: null,
 };
 
@@ -62,8 +82,8 @@ export function reducer(state: State, action: Action): State {
       if (state.view.kind === "error") {
         return { view: showing(action.digit), pending: null };
       }
-      const { display, overwrite } = state.view;
-      if (overwrite || display === "0") {
+      const { display, entry } = state.view;
+      if (entry !== "typing" || display === "0") {
         return { ...state, view: showing(action.digit) };
       }
       return { ...state, view: showing(display + action.digit) };
@@ -76,8 +96,8 @@ export function reducer(state: State, action: Action): State {
       if (state.view.kind === "error") {
         return { view: showing("0."), pending: null };
       }
-      const { display, overwrite } = state.view;
-      if (overwrite) {
+      const { display, entry } = state.view;
+      if (entry !== "typing") {
         return { ...state, view: showing("0.") };
       }
       if (display.includes(".")) {
@@ -97,7 +117,7 @@ export function reducer(state: State, action: Action): State {
       // since "Error" is not an operand.
       const display = state.view.kind === "value" ? state.view.display : "0";
       return {
-        view: { kind: "value", display, overwrite: true },
+        view: { kind: "value", display, entry: "awaiting" },
         pending: { operation: action.operation, operand: action.operand },
       };
     }
@@ -106,18 +126,22 @@ export function reducer(state: State, action: Action): State {
       return { ...state, view: { kind: "busy" } };
 
     case "resultShown":
-      return { view: entered(action.result), pending: null };
+      return { view: computed(action.result), pending: null };
 
+    // The result has just become the new operation's first operand, so this
+    // is the same situation as having pressed the operator: awaiting, not a
+    // freestanding result. 2 + 3 × − therefore switches × to −.
     case "resultChained":
       return {
-        view: entered(action.result),
+        view: { kind: "value", display: formatResult(action.result), entry: "awaiting" },
         pending: { operation: action.operation, operand: action.result },
       };
 
     // A unary key acts on the displayed value alone, so a half-built binary
-    // calculation carries on untouched: 5 + 9 √ = still adds 5 to 3.
+    // calculation carries on untouched: 5 + 9 √ = still adds 5 to 3. The
+    // result is a real operand for whatever comes next.
     case "unaryResultShown":
-      return { ...state, view: entered(action.result) };
+      return { ...state, view: computed(action.result) };
 
     case "calculationFailed":
       return { view: { kind: "error", message: action.message }, pending: null };
@@ -143,10 +167,10 @@ export function currentOperand(state: State): number | null {
 
 /** A value the user is still typing into. */
 function showing(display: string): View {
-  return { kind: "value", display, overwrite: false };
+  return { kind: "value", display, entry: "typing" };
 }
 
-/** A computed value: the next digit starts a new number rather than appending. */
-function entered(result: number): View {
-  return { kind: "value", display: formatResult(result), overwrite: true };
+/** A freestanding result, usable as an operand by whatever comes next. */
+function computed(result: number): View {
+  return { kind: "value", display: formatResult(result), entry: "computed" };
 }
