@@ -75,7 +75,7 @@ calculator-app/
 
 ## Setup
 
-Prerequisites: [Go 1.23+](https://go.dev/dl/), [Node.js 22+](https://nodejs.org/)
+Prerequisites: [Go 1.25+](https://go.dev/dl/), [Node.js 22+](https://nodejs.org/)
 (required by the test toolchain — jsdom/Vitest; the production build itself works on Node 20),
 and optionally [Docker](https://www.docker.com/) to run the whole stack in containers.
 
@@ -139,8 +139,18 @@ npm run test       # run once
 npm run coverage   # run with a coverage report
 ```
 
-Both suites also run in CI on every push/PR to `main` (see
+Both suites also run in CI on every push/PR to `main`, along with `gofmt`,
+`go vet`, `oxlint`, and `go test -race` (see
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+**Contract smoke test.** Unit tests on each side mock the other — the frontend
+mocks its API client, the backend tests Go structs — so if the two stopped
+agreeing on the wire format, every test would still pass and the app would be
+broken. CI therefore also brings up the real `docker compose` stack and talks
+to it over HTTP: that the frontend is served, that `add` returns `result: 5`,
+that a unary response omits `b`, that division by zero returns a `400` with a
+displayable message, and that a request's `X-Request-Id` really does appear in
+the backend's logs.
 
 ## API
 
@@ -213,6 +223,52 @@ curl -X POST http://localhost:8080/api/v1/calculate \
 
 Returns `{"status":"ok"}` — used for container/orchestration health checks.
 
+### `GET /metrics`
+
+Prometheus exposition format. See [Observability](#observability).
+
+## Observability
+
+Every response carries an `X-Request-Id`, and that same ID appears on every
+log line for the request — so a user reporting "it said Error at 3pm" can be
+traced to the exact reason it failed:
+
+```console
+$ curl -i -X POST localhost:8080/api/v1/calculate -d '{"operation":"divide","a":1,"b":0}'
+X-Request-Id: 9b0542fb5e465de5
+
+$ docker compose logs backend | grep 9b0542fb5e465de5
+{"level":"WARN","msg":"calculation rejected","status":400,"reason":"division by zero","request_id":"9b0542fb5e465de5"}
+{"level":"INFO","msg":"request","method":"POST","path":"/api/v1/calculate","status":400,"duration_ms":0.12,"request_id":"9b0542fb5e465de5"}
+```
+
+Logs are JSON on stdout via `log/slog`, for the container runtime to collect.
+
+`GET /metrics` exposes RED metrics — rate, errors, duration:
+
+| Metric                                       | Labels                     |
+|----------------------------------------------|----------------------------|
+| `calculator_http_requests_total`             | method, route, status      |
+| `calculator_http_request_duration_seconds`   | method, route              |
+| `calculator_calculations_total`              | operation, outcome         |
+
+The domain counter is the one worth having. HTTP status alone can't tell you
+*which* operation is failing or why:
+
+```
+calculator_calculations_total{operation="add",outcome="success"} 2
+calculator_calculations_total{operation="divide",outcome="domain_error"} 1
+calculator_calculations_total{operation="multiply",outcome="out_of_range"} 1
+calculator_calculations_total{operation="unknown",outcome="invalid_request"} 1
+```
+
+**Label cardinality is bounded on purpose.** Labelling by raw request path or
+raw operation name would let any caller mint unlimited time series by sending
+junk — enough to exhaust the memory of whatever scrapes it. Unmatched routes
+collapse to `unmatched`, and operation names collapse to `unknown` until the
+registry confirms them (which is why `factorial` appears as `unknown` above).
+Routes are labelled by matched pattern, not URL.
+
 ## Design decisions
 
 **Strategy pattern for operations.** Each arithmetic operation
@@ -241,11 +297,24 @@ like it worked.
 `50` becomes `0.5`, rather than computing "b percent of a". The UI mimics a
 phone calculator, and that is what `%` does there.
 
-**No web framework on the backend.** With seven operations behind two routes, a
-third-party router/framework would add a dependency without solving a real
-problem. Go's stdlib `net/http` (1.22+ method-aware `ServeMux`) plus ~60 lines
-of hand-written middleware (recover, logging, CORS) covers everything needed
-here idiomatically.
+**No web framework on the backend.** With seven operations behind three routes,
+a third-party router/framework would add a dependency without solving a real
+problem. Go's stdlib `net/http` (1.22+ method-aware `ServeMux`) plus ~120 lines
+of hand-written middleware (request IDs, recover, logging, metrics, CORS)
+covers everything needed here idiomatically.
+
+**One dependency, deliberately.** The Prometheus client is the project's only
+third-party import, which is a considered exception rather than a loosened
+rule: the objection to a web framework is that stdlib already routes two paths
+perfectly well, whereas stdlib has no histograms and no labelled counters, so
+`expvar` would mean hand-rolling percentile buckets and per-operation maps to
+end up somewhere worse. A library earns its place when it does something the
+standard library genuinely can't.
+
+**No tracing.** It would be ceremony here — one hop, no database, no fan-out,
+no queue, so every trace would be a single span restating the access log.
+Traces earn their keep when there's a call graph to reconstruct; this service
+doesn't have one yet.
 
 **Error handling.** Domain errors (`ErrDivisionByZero`, `ErrNegativeSquareRoot`,
 `ErrUnknownOperation`) are plain Go sentinel errors, kept independent of HTTP
@@ -279,8 +348,15 @@ and the muscle memory that comes with it — survives the addition.
 **Keyboard support.** Digits, `.`, `+ - * / ^`, `r` (root), `%`, `Enter`/`=`,
 and `Esc`/`C` all work from a physical keyboard. Every shortcut maps to a key
 that also exists on screen, so neither input method can do something the other
-can't — and the keypad is disabled while a request is in flight, so input
-can't be silently dropped by the response that replaces the display.
+can't.
+
+**The keypad locks during a request, except `C`.** A resolved calculation
+replaces the whole display, so input accepted mid-flight would be silently
+discarded — hence the lock. But a lock with no exceptions means a hung backend
+traps the user with a dead keypad and no way out, so clear stays live, and
+clearing invalidates the in-flight request by bumping an epoch counter that a
+late reply is checked against. Requests also carry an 8 second deadline, so a
+connection that never answers surfaces as an error rather than a spinner.
 
 **UI/UX heuristics applied to the keypad:**
 - *Fitts's Law* — every key stays at or above the ~44px minimum recommended
