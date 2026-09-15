@@ -1,47 +1,8 @@
-import { useEffect } from "react";
-import type { BinaryOperation, Operation, UnaryOperation } from "../api/calculatorApi";
+import { BINARY_OPERATIONS, UNARY_OPERATIONS } from "../calculator/operations";
 import { useCalculator } from "../calculator/useCalculator";
+import { useKeyboardInput } from "../calculator/useKeyboardInput";
 import { formatForDisplay, formatResult } from "../format";
 import "./Calculator.css";
-
-/** Compact glyphs, used on keys and in the pending-operation indicator. */
-const OPERATION_SYMBOLS: Record<Operation, string> = {
-  add: "+",
-  subtract: "−",
-  multiply: "×",
-  divide: "÷",
-  power: "^",
-  sqrt: "√",
-  percent: "%",
-};
-
-/**
- * Where a key reads better than its compact glyph. "xʸ" is the conventional
- * label for a power key, but it is too wide for the indicator that sits under
- * the running value, which uses "^" instead.
- */
-const KEY_LABELS: Partial<Record<Operation, string>> = {
-  power: "xʸ",
-};
-
-function keyLabel(operation: Operation): string {
-  return KEY_LABELS[operation] ?? OPERATION_SYMBOLS[operation];
-}
-
-// Keyboard equivalents for the on-screen keys. Every shortcut maps to a key
-// that exists in the UI, so the two input methods stay in sync.
-const KEY_TO_BINARY_OPERATION: Record<string, BinaryOperation> = {
-  "+": "add",
-  "-": "subtract",
-  "*": "multiply",
-  "/": "divide",
-  "^": "power",
-};
-
-const KEY_TO_UNARY_OPERATION: Record<string, UnaryOperation> = {
-  r: "sqrt",
-  "%": "percent",
-};
 
 export function Calculator() {
   const calculator = useCalculator();
@@ -58,46 +19,7 @@ export function Calculator() {
     equals,
   } = calculator;
 
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.ctrlKey || event.metaKey || event.altKey) {
-        return;
-      }
-      // A focused key already activates itself on Enter/Space; handling the
-      // event here as well would apply the same press twice.
-      const activatingFocusedKey =
-        document.activeElement instanceof HTMLButtonElement &&
-        (event.key === "Enter" || event.key === " ");
-      if (activatingFocusedKey) {
-        return;
-      }
-
-      const { key } = event;
-
-      if (key >= "0" && key <= "9") {
-        inputDigit(key);
-      } else if (key === "." || key === ",") {
-        inputDecimal();
-      } else if (key in KEY_TO_BINARY_OPERATION) {
-        void chooseOperation(KEY_TO_BINARY_OPERATION[key]);
-      } else if (key.toLowerCase() in KEY_TO_UNARY_OPERATION) {
-        void applyUnaryOperation(KEY_TO_UNARY_OPERATION[key.toLowerCase()]);
-      } else if (key === "Enter" || key === "=") {
-        void equals();
-      } else if (key === "Escape" || key === "c" || key === "C") {
-        clear();
-      } else {
-        return;
-      }
-
-      event.preventDefault();
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-    // Deliberately re-subscribed on every render: the handlers close over the
-    // current state, so a stale listener would act on stale operands.
-  });
+  useKeyboardInput(calculator);
 
   return (
     <div className="calculator" role="group" aria-label="Calculator">
@@ -114,7 +36,7 @@ export function Calculator() {
         >
           {error ??
             (pending &&
-              `${formatForDisplay(formatResult(pending.operand))} ${OPERATION_SYMBOLS[pending.operation]}`)}
+              `${formatForDisplay(formatResult(pending.operand))} ${BINARY_OPERATIONS[pending.operation].symbol}`)}
         </span>
         <span className="calculator-display-value" data-testid="display" aria-live="polite">
           {formatForDisplay(display)}
@@ -129,7 +51,7 @@ export function Calculator() {
             onClick={() => applyUnaryOperation(operation)}
             disabled={busy}
           >
-            {keyLabel(operation)}
+            {UNARY_OPERATIONS[operation].label}
           </button>
         ))}
         <button
@@ -138,7 +60,7 @@ export function Calculator() {
           onClick={() => chooseOperation("power")}
           disabled={busy}
         >
-          {keyLabel("power")}
+          {BINARY_OPERATIONS.power.label}
         </button>
       </div>
       <div className="calculator-keypad" onMouseDown={keepFocusOffClickedKeys}>
@@ -153,7 +75,7 @@ export function Calculator() {
             onClick={() => chooseOperation(operation)}
             disabled={busy}
           >
-            {keyLabel(operation)}
+            {BINARY_OPERATIONS[operation].label}
           </button>
         ))}
 
@@ -168,7 +90,7 @@ export function Calculator() {
           onClick={() => chooseOperation("add")}
           disabled={busy}
         >
-          {keyLabel("add")}
+          {BINARY_OPERATIONS.add.label}
         </button>
 
         {["4", "5", "6", "1", "2", "3"].map((d) => (

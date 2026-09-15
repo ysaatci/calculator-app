@@ -7,7 +7,6 @@ import {
   type UnaryOperation,
 } from "../api/calculatorApi";
 import {
-  currentOperand,
   displayText,
   initialState,
   reducer,
@@ -136,7 +135,6 @@ export function useCalculator() {
     pending: state.pending,
     error: state.view.kind === "error" ? state.view.message : null,
     busy: state.view.kind === "busy",
-    operand: currentOperand(state),
     inputDigit,
     inputDecimal,
     clear,

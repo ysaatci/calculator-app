@@ -160,11 +160,6 @@ export function displayText(state: State): string {
   }
 }
 
-/** The operand the next calculation should use, or null if there isn't one. */
-export function currentOperand(state: State): number | null {
-  return state.view.kind === "value" ? Number(state.view.display) : null;
-}
-
 /** A value the user is still typing into. */
 function showing(display: string): View {
   return { kind: "value", display, entry: "typing" };

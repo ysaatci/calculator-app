@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  currentOperand,
   displayText,
   initialState,
   reducer,
@@ -145,11 +144,6 @@ describe("in-flight calculations", () => {
     expect(displayText(state)).toBe("…");
   });
 
-  it("offers no operand while busy, so none can be read by mistake", () => {
-    const state = run({ type: "digitPressed", digit: "9" }, { type: "calculationStarted" });
-    expect(currentOperand(state)).toBeNull();
-  });
-
   it("ignores key presses that arrive mid-request", () => {
     const busy = run({ type: "digitPressed", digit: "9" }, { type: "calculationStarted" });
 
@@ -179,10 +173,6 @@ describe("errors", () => {
       { type: "calculationFailed", message: "division by zero" },
     );
     expect(state.pending).toBeNull();
-  });
-
-  it("offers no operand, since 'Error' is not a number", () => {
-    expect(currentOperand(failed)).toBeNull();
   });
 
   it("starts a fresh number when a digit follows", () => {
