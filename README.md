@@ -9,59 +9,92 @@ flowchart TB
     User(["👤 User"])
 
     subgraph FE ["🖥️  Frontend · React + TypeScript · nginx :3000"]
-        direction LR
-        UI["Calculator UI<br/>keypad · display<br/>input state machine"]
-        Client["calculatorApi.ts<br/>typed fetch client<br/>validates the response"]
-        UI <--> Client
+        direction TB
+        subgraph VIEW ["Presentation · src/components"]
+            UI["Calculator<br/>renders keypad and display"]
+            KB["useKeyboardInput<br/>key presses → actions"]
+        end
+        subgraph STATE ["State · src/calculator"]
+            HOOK["useCalculator<br/>requests · cancellation<br/>error mapping"]
+            OPTABLE["operations.ts<br/>symbol · label · shortcut<br/>one entry per operation"]
+            MACHINE["machine.ts · pure reducer<br/>value | busy | error<br/>typing | awaiting | computed"]
+        end
+        subgraph TRANSPORT ["Transport · src/api"]
+            CLIENT["calculatorApi.ts<br/>abort signal · 8s deadline<br/>validates replies"]
+        end
+        UI --> HOOK
+        KB --> HOOK
+        UI -.-> OPTABLE
+        KB -.-> OPTABLE
+        HOOK --> MACHINE
+        HOOK --> CLIENT
     end
 
     subgraph BE ["⚙️  Backend · Go net/http · :8080"]
         direction TB
-
         subgraph APIL ["API layer · internal/api"]
-            direction LR
-            MW["Middleware<br/>recover → log → CORS"]
-            H["Calculate handler<br/>parse · check arity<br/>map errors to status"]
-            MW --> H
+            CHAIN["Middleware chain<br/>RequestID → Recover →<br/>Logging → Metrics → CORS"]
+            HEALTH["GET /healthz"]
+            H["Calculate handler<br/>decode · resolve · check arity<br/>apply · reject non-finite"]
+            RES{{"OperationResolver<br/>interface"}}
+            CHAIN --> HEALTH
+            CHAIN --> H
+            H -- "Get(name)" --> RES
         end
-
+        METRICS["GET /metrics<br/>RED metrics, outside the chain"]
         subgraph DOM ["Domain layer · internal/calculator"]
-            direction TB
-            REG{{"Operation registry<br/>name → strategy"}}
+            REG["Registry"]
             BIN["Binary · 2 operands<br/>add · subtract · multiply<br/>divide · power"]
             UN["Unary · 1 operand<br/>sqrt · percent"]
             REG --> BIN
             REG --> UN
         end
-
-        H -- "Get(name)" --> REG
+        RES -. "implemented by" .-> REG
     end
 
-    User --> UI
-    Client == "POST /api/v1/calculate<br/>{ operation, a, b? }" ==> MW
-    H -. "200 { result }  ·  4xx { error }" .-> Client
+    Compose(["🐳 compose healthcheck"])
+    Scraper(["📈 Prometheus scraper"])
 
-    classDef edge fill:#f6f8fa,stroke:#57606a,stroke-width:1px,color:#24292f
+    User --> UI
+    User --> KB
+    CLIENT == "POST /api/v1/calculate<br/>{ operation, a, b? }" ==> CHAIN
+    H -. "200 { result } · 4xx { error }<br/>with X-Request-Id" .-> CLIENT
+    HEALTH -. "probed by" .-> Compose
+    METRICS -. "scraped by" .-> Scraper
+
+    classDef actor fill:#f6f8fa,stroke:#57606a,stroke-width:1px,color:#24292f
     classDef front fill:#ddf4ff,stroke:#0969da,stroke-width:1px,color:#0a3069
     classDef api fill:#fff8c5,stroke:#bf8700,stroke-width:1px,color:#4d2d00
     classDef domain fill:#dafbe1,stroke:#1a7f37,stroke-width:1px,color:#0f5323
-    classDef store fill:#fbefff,stroke:#8250df,stroke-width:1px,color:#3e1f79
+    classDef contract fill:#fbefff,stroke:#8250df,stroke-width:1px,color:#3e1f79
 
-    class User edge
-    class UI,Client front
-    class MW,H api
-    class BIN,UN domain
-    class REG store
+    class User,Compose,Scraper actor
+    class UI,KB,HOOK,CLIENT front
+    class CHAIN,HEALTH,H,METRICS api
+    class MACHINE,OPTABLE,REG,BIN,UN domain
+    class RES contract
 
     style FE fill:#ffffff,stroke:#afb8c1,color:#24292f
     style BE fill:#ffffff,stroke:#afb8c1,color:#24292f
+    style VIEW fill:#f6f8fa,stroke:#d0d7de,color:#57606a
+    style STATE fill:#f6f8fa,stroke:#d0d7de,color:#57606a
+    style TRANSPORT fill:#f6f8fa,stroke:#d0d7de,color:#57606a
     style APIL fill:#f6f8fa,stroke:#d0d7de,color:#57606a
     style DOM fill:#f6f8fa,stroke:#d0d7de,color:#57606a
 ```
 
-Adding an operation means writing one strategy and registering it — the
-handler, router, and frontend transport all stay untouched. `sqrt` and
-`percent` were added to this diagram's **Unary** box exactly that way.
+**Reading the diagram.** Colour marks the kind of code: blue is the frontend's
+React and I/O layers, yellow is HTTP, green is pure domain logic with no I/O
+on either side, and purple is the one seam between the API and the domain.
+The handler asks an `OperationResolver` for operations by name and never
+names one itself, while the frontend's input rules live in a reducer that
+knows nothing about fetch or the DOM.
+
+Adding an operation touches two places: a strategy registered in the
+backend's `Registry`, and an entry in the frontend's `operations.ts` table
+(which the compiler insists on) plus a key on the pad. The handler, router,
+middleware, API client and state machine stay untouched — `power`, `sqrt` and
+`percent` were all added that way.
 
 ## Project layout
 
