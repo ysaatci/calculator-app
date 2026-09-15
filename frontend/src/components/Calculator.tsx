@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   calculate,
   CalculatorApiError,
@@ -54,6 +54,7 @@ const INITIAL_STATE: State = {
 export function Calculator() {
   const [state, setState] = useState<State>(INITIAL_STATE);
   const { display, pendingOperation, error, loading } = state;
+  const epochRef = useRef(0);
 
   function inputDigit(digit: string) {
     if (state.loading) {
@@ -91,7 +92,12 @@ export function Calculator() {
     });
   }
 
+  // Clear stays available while a request is in flight, so a slow or dead
+  // backend can never trap the user with an unusable keypad. Bumping the
+  // epoch makes any reply that arrives afterwards land on the floor instead
+  // of overwriting the display the user just reset.
   function clear() {
+    epochRef.current += 1;
     setState(INITIAL_STATE);
   }
 
@@ -144,9 +150,13 @@ export function Calculator() {
     }
 
     const value = Number(state.display);
+    const epoch = epochRef.current;
     setState((s) => ({ ...s, loading: true }));
     try {
       const { result } = await calculate(operation, value);
+      if (epoch !== epochRef.current) {
+        return;
+      }
       setState((s) => ({
         ...s,
         display: formatResult(result),
@@ -155,6 +165,9 @@ export function Calculator() {
         loading: false,
       }));
     } catch (err) {
+      if (epoch !== epochRef.current) {
+        return;
+      }
       setState(failedState(err));
     }
   }
@@ -165,9 +178,13 @@ export function Calculator() {
     b: number,
     nextPendingOperation: BinaryOperation | null,
   ) {
+    const epoch = epochRef.current;
     setState((s) => ({ ...s, loading: true }));
     try {
       const { result } = await calculate(operation, a, b);
+      if (epoch !== epochRef.current) {
+        return;
+      }
       setState({
         display: formatResult(result),
         storedValue: nextPendingOperation ? result : null,
@@ -177,6 +194,9 @@ export function Calculator() {
         loading: false,
       });
     } catch (err) {
+      if (epoch !== epochRef.current) {
+        return;
+      }
       setState(failedState(err));
     }
   }
@@ -261,7 +281,7 @@ export function Calculator() {
         </button>
       </div>
       <div className="calculator-keypad">
-        <button type="button" className="key key-clear" onClick={clear} disabled={loading}>
+        <button type="button" className="key key-clear" onClick={clear}>
           C
         </button>
         {(["divide", "multiply", "subtract"] as const).map((operation) => (

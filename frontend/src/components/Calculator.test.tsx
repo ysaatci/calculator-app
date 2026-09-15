@@ -223,7 +223,8 @@ describe("Calculator", () => {
 
     await user.keyboard("2+3{Enter}");
     // Disabled buttons block the mouse; this guards the keyboard path.
-    await user.keyboard("7.9*{Escape}");
+    // Escape is deliberately exempt - see the clear-as-escape-hatch test.
+    await user.keyboard("7.9*");
 
     await act(async () => {
       resolveCalculation({ operation: "add", a: 2, b: 3, result: 5 });
@@ -231,6 +232,32 @@ describe("Calculator", () => {
 
     expect(calculateMock).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("display")).toHaveTextContent("5");
+  });
+
+  it("lets C rescue the keypad while a request is in flight", async () => {
+    let resolveCalculation!: (value: CalculateResult) => void;
+    calculateMock.mockReturnValue(
+      new Promise<CalculateResult>((resolve) => {
+        resolveCalculation = resolve;
+      }),
+    );
+    render(<Calculator />);
+
+    await pressButtons(["2", "+", "3", "="])();
+
+    // Every other key is locked, but a hung backend must not trap the user.
+    expect(screen.getByRole("button", { name: "7" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "C" })).toBeEnabled();
+
+    await pressButtons(["C"])();
+    expect(screen.getByTestId("display")).toHaveTextContent("0");
+    expect(screen.getByRole("button", { name: "7" })).toBeEnabled();
+
+    // The abandoned reply must not overwrite what the user reset to.
+    await act(async () => {
+      resolveCalculation({ operation: "add", a: 2, b: 3, result: 5 });
+    });
+    expect(screen.getByTestId("display")).toHaveTextContent("0");
   });
 
   it("ignores unrelated keys and modifier shortcuts", async () => {

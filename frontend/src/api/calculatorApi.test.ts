@@ -63,6 +63,32 @@ describe("calculate", () => {
     await expect(calculate("add", 1, 2)).rejects.toThrow(CalculatorApiError);
   });
 
+  it("gives up on a request that never settles", async () => {
+    vi.useFakeTimers();
+    // A fetch that hangs forever until its abort signal fires - the failure
+    // mode that would otherwise leave the UI waiting with no way out.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => {
+              const err = new Error("aborted");
+              err.name = "AbortError";
+              reject(err);
+            });
+          }),
+      ),
+    );
+
+    const pending = calculate("add", 1, 2);
+    const assertion = expect(pending).rejects.toThrow("took too long");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await assertion;
+
+    vi.useRealTimers();
+  });
+
   it("throws CalculatorApiError when the network request fails", async () => {
     vi.stubGlobal(
       "fetch",
