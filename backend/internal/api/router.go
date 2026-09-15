@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/batusaatci/calculator-app/backend/internal/calculator"
 )
 
@@ -16,5 +18,11 @@ func NewRouter(registry *calculator.Registry, allowedOrigin string) http.Handler
 	mux.HandleFunc("GET /healthz", h.Health)
 	mux.HandleFunc("POST /api/v1/calculate", h.Calculate)
 
-	return Chain(mux, Recover, Logging, CORS(allowedOrigin))
+	root := http.NewServeMux()
+	// Scrapes arrive every few seconds and would otherwise bury the access
+	// log in noise, so /metrics sits outside the instrumented chain.
+	root.Handle("GET /metrics", promhttp.Handler())
+	root.Handle("/", Chain(mux, RequestID, Recover, Logging, Metrics, CORS(allowedOrigin)))
+
+	return root
 }

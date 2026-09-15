@@ -3,16 +3,16 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"io"
-	"log"
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/batusaatci/calculator-app/backend/internal/calculator"
+	"github.com/batusaatci/calculator-app/backend/internal/metrics"
 )
 
 func newTestServer() http.Handler {
@@ -28,7 +28,38 @@ func doCalculate(t *testing.T, srv http.Handler, body string) *httptest.Response
 	return rec
 }
 
+func TestCalculate_RecordsOutcomePerOperation(t *testing.T) {
+	discardLogs(t)
+	srv := newTestServer()
+
+	// An unregistered name must not reach the label space as-is.
+	cases := []struct {
+		body      string
+		operation string
+		outcome   string
+	}{
+		{`{"operation":"add","a":1,"b":2}`, "add", metrics.OutcomeSuccess},
+		{`{"operation":"divide","a":1,"b":0}`, "divide", metrics.OutcomeDomainError},
+		{`{"operation":"multiply","a":1e308,"b":1e308}`, "multiply", metrics.OutcomeOutOfRange},
+		{`{"operation":"factorial","a":5,"b":1}`, metrics.UnknownOperation, metrics.OutcomeInvalidRequest},
+	}
+
+	for _, c := range cases {
+		t.Run(c.operation+"/"+c.outcome, func(t *testing.T) {
+			counter := metrics.Calculations.WithLabelValues(c.operation, c.outcome)
+			before := testutil.ToFloat64(counter)
+
+			doCalculate(t, srv, c.body)
+
+			if after := testutil.ToFloat64(counter); after != before+1 {
+				t.Fatalf("counter went %v -> %v, want +1", before, after)
+			}
+		})
+	}
+}
+
 func TestCalculate_Success(t *testing.T) {
+	discardLogs(t)
 	srv := newTestServer()
 
 	// Comparing the raw body pins the wire format, including the fact that
@@ -128,8 +159,7 @@ func TestCalculate_RejectsOversizedBody(t *testing.T) {
 // successful-looking empty response - the failure mode that made an
 // overflowing calculation return "200 OK" with no body.
 func TestWriteJSON_UnencodableBodyFailsLoudly(t *testing.T) {
-	log.SetOutput(io.Discard)
-	defer log.SetOutput(os.Stderr)
+	discardLogs(t)
 
 	rec := httptest.NewRecorder()
 	writeJSON(rec, http.StatusOK, math.Inf(1))

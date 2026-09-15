@@ -4,7 +4,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +16,10 @@ import (
 )
 
 func main() {
+	// JSON on stdout: the container runtime collects it, and structured
+	// fields stay queryable instead of needing to be grepped out of prose.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	addr := ":" + envOrDefault("PORT", "8080")
 	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
 
@@ -30,9 +34,10 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("calculator API listening on %s", addr)
+		slog.Info("calculator API listening", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
+			slog.Error("server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -43,9 +48,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatalf("graceful shutdown failed: %v", err)
+		slog.Error("graceful shutdown failed", "error", err)
+		os.Exit(1)
 	}
-	log.Println("server stopped")
+	slog.Info("server stopped")
 }
 
 func envOrDefault(key, fallback string) string {

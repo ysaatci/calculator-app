@@ -1,10 +1,24 @@
 package api
 
 import (
-	"log"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
+
+	"github.com/batusaatci/calculator-app/backend/internal/metrics"
 )
+
+// RequestIDHeader carries the per-request identifier back to the caller, so a
+// user reporting "it said Error" can be matched to the exact log lines.
+const RequestIDHeader = "X-Request-Id"
+
+type contextKey int
+
+const requestIDKey contextKey = iota
 
 // Middleware wraps an http.Handler with cross-cutting behavior.
 type Middleware func(http.Handler) http.Handler
@@ -17,13 +31,33 @@ func Chain(h http.Handler, mw ...Middleware) http.Handler {
 	return h
 }
 
+// RequestID gives every request an identifier, echoes it in the response
+// headers and puts it in the context for downstream logging.
+func RequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := newRequestID()
+		w.Header().Set(RequestIDHeader, id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, id)))
+	})
+}
+
+// RequestIDFromContext returns the identifier assigned by RequestID, or "" if
+// the request did not pass through that middleware.
+func RequestIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey).(string)
+	return id
+}
+
 // Recover turns a panic in a downstream handler into a 500 response instead
 // of crashing the server.
 func Recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.Printf("panic recovered: %v", rec)
+				slog.ErrorContext(r.Context(), "panic recovered",
+					"panic", rec,
+					"request_id", RequestIDFromContext(r.Context()),
+				)
 				writeError(w, http.StatusInternalServerError, "internal server error")
 			}
 		}()
@@ -31,13 +65,38 @@ func Recover(next http.Handler) http.Handler {
 	})
 }
 
-// Logging logs the method, path, status, and duration of each request.
+// Logging emits one structured line per request.
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, sw.status, time.Since(start))
+
+		slog.InfoContext(r.Context(), "request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", sw.status,
+			"duration_ms", float64(time.Since(start).Microseconds())/1000,
+			"request_id", RequestIDFromContext(r.Context()),
+		)
+	})
+}
+
+// Metrics records request counts and latency, labelled by the matched route
+// pattern rather than the raw path so unknown URLs can't inflate cardinality.
+func Metrics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+
+		route := r.Pattern
+		if route == "" {
+			route = metrics.UnmatchedRoute
+		}
+
+		metrics.HTTPRequests.WithLabelValues(r.Method, route, strconv.Itoa(sw.status)).Inc()
+		metrics.HTTPDuration.WithLabelValues(r.Method, route).Observe(time.Since(start).Seconds())
 	})
 }
 
@@ -68,4 +127,14 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+func newRequestID() string {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		// crypto/rand failing is not a reason to drop the request; a
+		// timestamp still distinguishes it from its neighbours.
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(buf[:])
 }
