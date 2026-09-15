@@ -379,11 +379,33 @@ successful-looking empty `200`. Request bodies are capped at 1 MiB via
 a caller's behalf.
 
 **A real calculator UI.** The frontend renders an actual calculator (digit
-grid, display, operator keys) with a small state machine for digit entry,
-decimal handling, and operator chaining, rather than plain input boxes — this
-also makes `=` and the operator keys map directly onto the backend's single
-`/calculate` call. Unary keys act on the displayed value immediately and leave
-any pending operation alone, so `5 + 9 √ =` adds 5 to the root of 9.
+grid, display, operator keys) rather than plain input boxes — this also makes
+`=` and the operator keys map directly onto the backend's single `/calculate`
+call. Unary keys act on the displayed value immediately and leave any pending
+operation alone, so `5 + 9 √ =` adds 5 to the root of 9.
+
+**Illegal states are unrepresentable on the frontend too.** Input lives in a
+pure reducer (`src/calculator/machine.ts`) whose shape carries the invariants.
+An earlier version kept six loose fields — `display`, `storedValue`,
+`pendingOperation`, `overwrite`, `error`, `loading` — whose legal combinations
+were only implied: an error had to coincide with a display of `"Error"`, a
+pending operation had to coincide with a stored operand, and a request in
+flight had to coincide with a display nobody should read. The code ended up
+defending against combinations it couldn't rule out, with a `?? 0` fallback
+and null checks for cases that shouldn't exist. Now the view is exactly one of
+`value | busy | error`, and an operation cannot exist apart from the operand
+it is waiting on, so those states can't be built rather than being guarded.
+
+The payoff is testability. Verifying "a unary key leaves a pending operation
+untouched" used to mean rendering a component, mocking a module and firing DOM
+events; it is now three function calls on a reducer. `useCalculator` keeps the
+I/O — requests, cancellation, error mapping — and the component is left as
+presentation.
+
+**One cancellation mechanism, not two.** A request's deadline and a user
+pressing `C` are the same thing — "this answer is no longer wanted" — so both
+drive a single `AbortController`. Clearing now actually aborts the in-flight
+HTTP request instead of merely ignoring its reply.
 
 **Secondary functions get their own row.** `√`, `xʸ`, and `%` sit above the
 keypad instead of becoming a fifth column, so the four-column phone layout —
