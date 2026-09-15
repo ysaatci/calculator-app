@@ -55,7 +55,8 @@ calculator-app/
 
 ## Setup
 
-Prerequisites: [Go 1.23+](https://go.dev/dl/), [Node.js 20+](https://nodejs.org/),
+Prerequisites: [Go 1.23+](https://go.dev/dl/), [Node.js 22+](https://nodejs.org/)
+(required by the test toolchain — jsdom/Vitest; the production build itself works on Node 20),
 and optionally [Docker](https://www.docker.com/) to run the whole stack in containers.
 
 ### Run everything with Docker (recommended)
