@@ -31,15 +31,20 @@ func doCalculate(t *testing.T, srv http.Handler, body string) *httptest.Response
 func TestCalculate_Success(t *testing.T) {
 	srv := newTestServer()
 
+	// Comparing the raw body pins the wire format, including the fact that
+	// "b" is echoed back only for operations that actually take it.
 	tests := []struct {
-		name string
-		body string
-		want calculateResponse
+		name     string
+		body     string
+		wantJSON string
 	}{
-		{"add", `{"operation":"add","a":2,"b":3}`, calculateResponse{"add", 2, 3, 5}},
-		{"subtract", `{"operation":"subtract","a":5,"b":3}`, calculateResponse{"subtract", 5, 3, 2}},
-		{"multiply", `{"operation":"multiply","a":4,"b":3}`, calculateResponse{"multiply", 4, 3, 12}},
-		{"divide", `{"operation":"divide","a":6,"b":3}`, calculateResponse{"divide", 6, 3, 2}},
+		{"add", `{"operation":"add","a":2,"b":3}`, `{"operation":"add","a":2,"b":3,"result":5}`},
+		{"subtract", `{"operation":"subtract","a":5,"b":3}`, `{"operation":"subtract","a":5,"b":3,"result":2}`},
+		{"multiply", `{"operation":"multiply","a":4,"b":3}`, `{"operation":"multiply","a":4,"b":3,"result":12}`},
+		{"divide", `{"operation":"divide","a":6,"b":3}`, `{"operation":"divide","a":6,"b":3,"result":2}`},
+		{"power", `{"operation":"power","a":2,"b":10}`, `{"operation":"power","a":2,"b":10,"result":1024}`},
+		{"sqrt", `{"operation":"sqrt","a":9}`, `{"operation":"sqrt","a":9,"result":3}`},
+		{"percent", `{"operation":"percent","a":50}`, `{"operation":"percent","a":50,"result":0.5}`},
 	}
 
 	for _, tt := range tests {
@@ -49,13 +54,8 @@ func TestCalculate_Success(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
 			}
-
-			var got calculateResponse
-			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-				t.Fatalf("invalid JSON response: %v", err)
-			}
-			if got != tt.want {
-				t.Fatalf("got %+v, want %+v", got, tt.want)
+			if got := rec.Body.String(); got != tt.wantJSON {
+				t.Fatalf("body = %s, want %s", got, tt.wantJSON)
 			}
 		})
 	}
@@ -68,15 +68,19 @@ func TestCalculate_Errors(t *testing.T) {
 		name       string
 		body       string
 		wantStatus int
+		wantError  string // exact message, when the contract is documented
 	}{
-		{"malformed JSON", `{"operation":"add",`, http.StatusBadRequest},
-		{"missing operation", `{"a":1,"b":2}`, http.StatusBadRequest},
-		{"missing operand", `{"operation":"add","a":1}`, http.StatusBadRequest},
-		{"non-numeric operand", `{"operation":"add","a":"x","b":2}`, http.StatusBadRequest},
-		{"unknown operation", `{"operation":"sqrt","a":4,"b":0}`, http.StatusBadRequest},
-		{"division by zero", `{"operation":"divide","a":1,"b":0}`, http.StatusBadRequest},
-		{"result overflows float64", `{"operation":"multiply","a":1e308,"b":1e308}`, http.StatusBadRequest},
-		{"result underflows to -Inf", `{"operation":"divide","a":-1e308,"b":1e-308}`, http.StatusBadRequest},
+		{"malformed JSON", `{"operation":"add",`, http.StatusBadRequest, ""},
+		{"missing operation", `{"a":1,"b":2}`, http.StatusBadRequest, ""},
+		{"missing operand", `{"operation":"add","a":1}`, http.StatusBadRequest, `add needs two operands, "a" and "b"`},
+		{"operand supplied to a unary operation", `{"operation":"sqrt","a":9,"b":2}`, http.StatusBadRequest, `sqrt takes a single operand, "a"`},
+		{"non-numeric operand", `{"operation":"add","a":"x","b":2}`, http.StatusBadRequest, ""},
+		{"unknown operation", `{"operation":"factorial","a":4,"b":0}`, http.StatusBadRequest, ""},
+		{"division by zero", `{"operation":"divide","a":1,"b":0}`, http.StatusBadRequest, "division by zero"},
+		{"square root of a negative", `{"operation":"sqrt","a":-1}`, http.StatusBadRequest, "square root of a negative number"},
+		{"undefined power", `{"operation":"power","a":-8,"b":0.5}`, http.StatusBadRequest, "result is out of range"},
+		{"result overflows float64", `{"operation":"multiply","a":1e308,"b":1e308}`, http.StatusBadRequest, "result is out of range"},
+		{"result underflows to -Inf", `{"operation":"divide","a":-1e308,"b":1e-308}`, http.StatusBadRequest, ""},
 	}
 
 	for _, tt := range tests {
@@ -93,6 +97,9 @@ func TestCalculate_Errors(t *testing.T) {
 			}
 			if got.Error == "" {
 				t.Fatalf("expected non-empty error message")
+			}
+			if tt.wantError != "" && got.Error != tt.wantError {
+				t.Fatalf("error = %q, want %q", got.Error, tt.wantError)
 			}
 		})
 	}

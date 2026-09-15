@@ -45,8 +45,8 @@ func (h *Handler) Calculate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "\"operation\" is required")
 		return
 	}
-	if req.A == nil || req.B == nil {
-		writeError(w, http.StatusBadRequest, "\"a\" and \"b\" are required numbers")
+	if req.A == nil {
+		writeError(w, http.StatusBadRequest, "\"a\" is a required number")
 		return
 	}
 
@@ -56,12 +56,25 @@ func (h *Handler) Calculate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := op.Apply(*req.A, *req.B)
+	// How many operands an operation takes is part of its contract, and
+	// supplying the wrong number is a client error like any other.
+	operands := []float64{*req.A}
+	switch {
+	case op.Arity() == 2 && req.B == nil:
+		writeError(w, http.StatusBadRequest, req.Operation+" needs two operands, \"a\" and \"b\"")
+		return
+	case op.Arity() == 1 && req.B != nil:
+		writeError(w, http.StatusBadRequest, req.Operation+" takes a single operand, \"a\"")
+		return
+	case op.Arity() == 2:
+		operands = append(operands, *req.B)
+	}
+
+	result, err := op.Apply(operands...)
 	if err != nil {
-		if errors.Is(err, calculator.ErrDivisionByZero) {
-			writeError(w, http.StatusBadRequest, "division by zero")
-			return
-		}
+		// Domain errors (division by zero, negative square root) are already
+		// phrased for the caller, and the operands are the only thing the
+		// caller controls, so they map to 400 rather than a server fault.
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -77,7 +90,7 @@ func (h *Handler) Calculate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, calculateResponse{
 		Operation: req.Operation,
 		A:         *req.A,
-		B:         *req.B,
+		B:         req.B,
 		Result:    result,
 	})
 }
