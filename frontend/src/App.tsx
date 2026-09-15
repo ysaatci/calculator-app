@@ -1,10 +1,13 @@
 import { Calculator } from "./components/Calculator";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 function App() {
   return (
     <main className="app">
       <h1>Calculator</h1>
-      <Calculator />
+      <ErrorBoundary>
+        <Calculator />
+      </ErrorBoundary>
     </main>
   );
 }
