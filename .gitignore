@@ -1,0 +1,19 @@
+# Go
+backend/bin/
+*.exe
+*.test
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.local
